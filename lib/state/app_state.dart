@@ -1,11 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../models.dart';
 import '../services/ai_service.dart';
 import '../services/gemini_live_service.dart';
+import '../services/live_foreground_service.dart';
 import '../services/storage_service.dart';
 import '../services/sync_service.dart';
 
@@ -20,6 +23,8 @@ class AdoetzAppState extends ChangeNotifier {
   final AiService _ai;
   GeminiLiveService? _liveService;
   Timer? _remoteSyncTimer;
+  Timer? _liveOutputPulseTimer;
+  DateTime? _lastHapticAt;
 
   bool initialized = false;
   bool isGenerating = false;
@@ -33,6 +38,7 @@ class AdoetzAppState extends ChangeNotifier {
   String liveStatus = '';
   String modelFetchStatus = '';
   double liveInputLevel = 0;
+  double liveOutputLevel = 0;
   int? lastSyncAt;
   String lastPushedHash = '';
   String? _liveUserMessageId;
@@ -131,6 +137,15 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   PersistedAppState buildState() {
+    final persistedSessions = sessions
+        .where((session) => !session.temporary)
+        .toList();
+    final persistedCurrentId =
+        persistedSessions.any((session) => session.id == currentSessionId)
+        ? currentSessionId
+        : (persistedSessions.isNotEmpty
+              ? persistedSessions.first.id
+              : currentSessionId);
     return PersistedAppState(
       currentUser: currentUser,
       authToken: authToken,
@@ -143,8 +158,8 @@ class AdoetzAppState extends ChangeNotifier {
       endpoints: endpoints,
       genSettings: genSettings,
       voiceSettings: voiceSettings,
-      sessions: sessions,
-      currentSessionId: currentSessionId,
+      sessions: persistedSessions,
+      currentSessionId: persistedCurrentId,
       memories: memories,
       tokenUsageData: tokenUsageData,
       customCounters: customCounters,
@@ -368,6 +383,15 @@ class AdoetzAppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  bool handleSystemBack() {
+    if (currentView != AppView.chat) {
+      currentView = AppView.chat;
+      notifyListeners();
+      return true;
+    }
+    return false;
+  }
+
   void toggleTheme() {
     theme = isDark ? 'light' : 'dark';
     notifyListeners();
@@ -393,7 +417,7 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void createSession() {
-    if (currentSession.messages.isEmpty) {
+    if (currentSession.messages.isEmpty && !currentSession.temporary) {
       currentView = AppView.chat;
       notifyListeners();
       return;
@@ -404,6 +428,30 @@ class AdoetzAppState extends ChangeNotifier {
     currentView = AppView.chat;
     notifyListeners();
     unawaited(_persistAndScheduleRemote());
+  }
+
+  void createTemporarySession() {
+    if (currentSession.temporary) {
+      currentView = AppView.chat;
+      notifyListeners();
+      return;
+    }
+    final session = Session.empty(
+      'temporary-${DateTime.now().microsecondsSinceEpoch}',
+    ).copyWith(title: 'Temporary Chat', temporary: true);
+    sessions = [session, ...sessions];
+    currentSessionId = session.id;
+    currentView = AppView.chat;
+    notifyListeners();
+  }
+
+  void headerChatShortcut() {
+    final session = currentSession;
+    if (session.messages.isEmpty && !session.temporary) {
+      createTemporarySession();
+    } else {
+      createSession();
+    }
   }
 
   void selectSession(String id) {
@@ -525,16 +573,17 @@ class AdoetzAppState extends ChangeNotifier {
     );
     final history = session.messages;
     final botId = (now.millisecondsSinceEpoch + 1).toString();
+    final modelForRequest = selectedModel;
     final botMessage = Message(
       id: botId,
       text: '',
       sender: 'bot',
       timestamp: DateFormat('hh:mm a').format(now),
-      model: selectedModel,
+      model: modelForRequest,
     );
     final isFirstMessage = history.isEmpty;
     final fallbackTitle = cleanTitle(
-      prompt.split(RegExp(r'\s+')).take(6).join(' '),
+      prompt.split(RegExp(r'\s+')).take(4).join(' '),
     );
     final nextSession = session.copyWith(
       title: isFirstMessage && fallbackTitle.isNotEmpty
@@ -546,7 +595,7 @@ class AdoetzAppState extends ChangeNotifier {
     _replaceSession(session.id, nextSession);
     isGenerating = true;
     syncStatus = '';
-    _maybeSaveUserMemory(prompt);
+    if (!session.temporary) _maybeSaveUserMemory(prompt);
     notifyListeners();
 
     String pendingBotText = '';
@@ -564,7 +613,7 @@ class AdoetzAppState extends ChangeNotifier {
         prompt: prompt.trim(),
         attachments: attachments,
         history: history,
-        selectedModel: selectedModel,
+        selectedModel: modelForRequest,
         endpoints: endpoints,
         endpointModels: endpointModels,
         genSettings: genSettings,
@@ -579,6 +628,7 @@ class AdoetzAppState extends ChangeNotifier {
         },
         onText: (text) {
           pendingBotText = text;
+          _maybeHapticForStreaming(text);
           textFlushTimer ??= Timer(
             const Duration(milliseconds: 70),
             flushBotText,
@@ -596,13 +646,22 @@ class AdoetzAppState extends ChangeNotifier {
         ...tokenUsageData,
         TokenUsageRecord(
           timestamp: DateTime.now().millisecondsSinceEpoch,
-          model: selectedModel,
+          model: modelForRequest,
           endpoint: response.endpointName,
           inputTokens: response.inputTokens,
           outputTokens: response.outputTokens,
           totalTokens: response.inputTokens + response.outputTokens,
         ),
       ];
+      if (isFirstMessage) {
+        unawaited(
+          _generateSessionTitle(
+            sessionId: session.id,
+            message: prompt.trim(),
+            model: modelForRequest,
+          ),
+        );
+      }
     } catch (error) {
       _updateBotMessage(
         session.id,
@@ -632,6 +691,14 @@ class AdoetzAppState extends ChangeNotifier {
     liveStatus = 'Connecting to Gemini Live...';
     syncStatus = '';
     notifyListeners();
+
+    try {
+      await _startLiveForegroundService();
+    } catch (error) {
+      syncStatus =
+          'Live background notification unavailable: ${error.toString().replaceFirst('Exception: ', '')}';
+      notifyListeners();
+    }
 
     Object? lastError;
     for (final liveModel in liveModels) {
@@ -663,6 +730,7 @@ class AdoetzAppState extends ChangeNotifier {
         },
         onOutputTranscript: (text, finished) {
           if (_liveService != service) return;
+          _pulseLiveOutput();
           _appendLiveTranscript(
             text: text,
             sender: 'bot',
@@ -702,6 +770,7 @@ class AdoetzAppState extends ChangeNotifier {
           if (_liveService != service) return;
           _clearLiveState();
           _liveService = null;
+          unawaited(LiveForegroundService.stop());
           notifyListeners();
         },
       );
@@ -735,6 +804,7 @@ class AdoetzAppState extends ChangeNotifier {
     liveStatus = message;
     _clearLiveState(clearStatus: false);
     _liveService = null;
+    unawaited(LiveForegroundService.stop());
     notifyListeners();
   }
 
@@ -744,6 +814,7 @@ class AdoetzAppState extends ChangeNotifier {
     _clearLiveState();
     notifyListeners();
     await service?.dispose();
+    await LiveForegroundService.stop();
     await _persistAndScheduleRemote();
   }
 
@@ -1010,7 +1081,7 @@ class AdoetzAppState extends ChangeNotifier {
           'live-$sender-${now.microsecondsSinceEpoch}-${messages.length}';
       if (isUser) {
         _liveUserMessageId = id;
-        _maybeSaveUserMemory(clean);
+        if (!session.temporary) _maybeSaveUserMemory(clean);
       } else {
         _liveBotMessageId = id;
       }
@@ -1031,7 +1102,9 @@ class AdoetzAppState extends ChangeNotifier {
         text: merged,
         tokenCount: finished ? countTokens(merged) : null,
       );
-      if (isUser && finished) _maybeSaveUserMemory(merged);
+      if (isUser && finished && !session.temporary) {
+        _maybeSaveUserMemory(merged);
+      }
     }
 
     if (finished) {
@@ -1042,11 +1115,14 @@ class AdoetzAppState extends ChangeNotifier {
       }
     }
 
-    final firstUserSpeech =
+    final firstUserSpeech = isUser && session.messages.isEmpty;
+    final finishedFirstUserSpeech =
         isUser &&
-        session.messages.isEmpty &&
-        session.title.trim().toLowerCase() == 'new session';
-    final title = firstUserSpeech ? cleanTitle(clean) : session.title;
+        finished &&
+        session.messages.where((m) => m.isUser).length <= 1;
+    final title = firstUserSpeech
+        ? cleanTitle(clean).split(RegExp(r'\s+')).take(4).join(' ')
+        : session.title;
     _replaceSession(
       session.id,
       session.copyWith(
@@ -1056,6 +1132,15 @@ class AdoetzAppState extends ChangeNotifier {
       ),
     );
     notifyListeners();
+    if (finishedFirstUserSpeech) {
+      unawaited(
+        _generateSessionTitle(
+          sessionId: session.id,
+          message: clean,
+          model: model,
+        ),
+      );
+    }
   }
 
   String _mergeTranscript(String existing, String chunk) {
@@ -1075,6 +1160,9 @@ class AdoetzAppState extends ChangeNotifier {
     isLiveVideoEnabled = false;
     isLiveFrontCamera = false;
     liveInputLevel = 0;
+    liveOutputLevel = 0;
+    _liveOutputPulseTimer?.cancel();
+    _liveOutputPulseTimer = null;
     _liveUserMessageId = null;
     _liveBotMessageId = null;
     if (clearStatus) liveStatus = '';
@@ -1097,6 +1185,73 @@ class AdoetzAppState extends ChangeNotifier {
   bool _isLiveCapableModel(String model) {
     final value = model.toLowerCase();
     return value.contains('live') || value.contains('native-audio');
+  }
+
+  Future<void> _startLiveForegroundService() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      await Permission.notification.request();
+    } catch (_) {}
+    await LiveForegroundService.start();
+  }
+
+  Future<void> _generateSessionTitle({
+    required String sessionId,
+    required String message,
+    required String model,
+  }) async {
+    if (message.trim().isEmpty) return;
+    try {
+      final generated = await _ai.generateTitle(
+        message: message,
+        selectedModel: model,
+        endpoints: endpoints,
+        endpointModels: endpointModels,
+        geminiApiKey: geminiApiKey,
+        syncSettings: syncSettings,
+      );
+      final title = cleanTitle(
+        generated,
+      ).split(RegExp(r'\s+')).take(4).join(' ');
+      if (title.trim().isEmpty) return;
+      final session = sessions
+          .where((item) => item.id == sessionId)
+          .firstOrNull;
+      if (session == null || session.messages.isEmpty) return;
+      _replaceSession(
+        sessionId,
+        session.copyWith(
+          title: title.trim(),
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+      notifyListeners();
+      unawaited(_persistAndScheduleRemote());
+    } catch (_) {}
+  }
+
+  void _maybeHapticForStreaming(String text) {
+    if (!genSettings.hapticStreamingEnabled ||
+        kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.android ||
+        text.trim().isEmpty) {
+      return;
+    }
+    final now = DateTime.now();
+    final last = _lastHapticAt;
+    if (last != null && now.difference(last).inMilliseconds < 140) return;
+    _lastHapticAt = now;
+    unawaited(HapticFeedback.selectionClick());
+  }
+
+  void _pulseLiveOutput() {
+    liveOutputLevel = 0.82;
+    _liveOutputPulseTimer?.cancel();
+    _liveOutputPulseTimer = Timer(const Duration(milliseconds: 280), () {
+      liveOutputLevel = 0;
+      notifyListeners();
+    });
+    notifyListeners();
   }
 
   String _cleanLiveError(Object error) {
@@ -1197,8 +1352,10 @@ class AdoetzAppState extends ChangeNotifier {
   @override
   void dispose() {
     _remoteSyncTimer?.cancel();
+    _liveOutputPulseTimer?.cancel();
     final live = _liveService;
     if (live != null) unawaited(live.dispose());
+    unawaited(LiveForegroundService.stop());
     super.dispose();
   }
 }

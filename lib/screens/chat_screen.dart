@@ -78,6 +78,19 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   onEditSave: _saveEdit,
                 ),
         ),
+        if (app.isLiveActive || app.isLiveConnecting)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Center(
+                child: _LiveVoiceOrb(
+                  inputLevel: app.liveInputLevel,
+                  outputLevel: app.liveOutputLevel,
+                  recording: app.isLiveRecording,
+                  connecting: app.isLiveConnecting,
+                ),
+              ),
+            ),
+          ),
         Positioned(
           left: 0,
           right: 0,
@@ -508,8 +521,8 @@ class _MessageBubble extends StatelessWidget {
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: maxWidth),
             child: Container(
-              padding: message.isUser 
-                  ? const EdgeInsets.symmetric(horizontal: 20, vertical: 14) 
+              padding: message.isUser
+                  ? const EdgeInsets.symmetric(horizontal: 20, vertical: 14)
                   : const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
               decoration: message.isUser
                   ? BoxDecoration(
@@ -578,7 +591,7 @@ class _MessageBubble extends StatelessWidget {
           if (!editing)
             Padding(
               padding: EdgeInsets.only(
-                top: 4, 
+                top: 4,
                 left: message.isUser ? 0 : 16,
                 right: message.isUser ? 12 : 0,
               ),
@@ -706,10 +719,12 @@ class _MarkdownMessage extends StatelessWidget {
   final AppPalette palette;
 
   String _enhanceMathAndVariables(String text) {
-    // 1. Apply the standalone variable formatter. 
+    // 1. Apply the standalone variable formatter.
     // We match existing backtick blocks (`...`) to ignore them.
     return text.replaceAllMapped(
-      RegExp(r'(`[^`]*`)|(?<!`)\b(O\([^)]+\)|\([a-zA-Z0-9\^_{}+\-/*=]+\)|\b[a-zA-Z0-9]+\^[{]?[a-zA-Z0-9]+[}]?\b)(?!`)'),
+      RegExp(
+        r'(`[^`]*`)|(?<!`)\b(O\([^)]+\)|\([a-zA-Z0-9\^_{}+\-/*=]+\)|\b[a-zA-Z0-9]+\^[{]?[a-zA-Z0-9]+[}]?\b)(?!`)',
+      ),
       (match) {
         if (match.group(1) != null) {
           return match.group(1)!; // Existing code block, leave it alone
@@ -733,9 +748,9 @@ class _MarkdownMessage extends StatelessWidget {
           );
         }
         if (part.content.trim().isEmpty) return const SizedBox.shrink();
-        
+
         final processedContent = _enhanceMathAndVariables(part.content);
-        
+
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 2),
           child: MarkdownBody(
@@ -745,14 +760,18 @@ class _MarkdownMessage extends StatelessWidget {
             builders: {
               'code': _InlineCodeBuilder(palette),
               'latex': LatexElementBuilder(
-                textStyle: TextStyle(
-                  color: palette.onSurface,
-                ),
+                textStyle: TextStyle(color: palette.onSurface),
               ),
             },
             extensionSet: md.ExtensionSet(
-              [LatexBlockSyntax(), ...md.ExtensionSet.gitHubFlavored.blockSyntaxes],
-              [LatexInlineSyntax(), ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes],
+              [
+                LatexBlockSyntax(),
+                ...md.ExtensionSet.gitHubFlavored.blockSyntaxes,
+              ],
+              [
+                LatexInlineSyntax(),
+                ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes,
+              ],
             ),
           ),
         );
@@ -786,10 +805,10 @@ class _MarkdownMessage extends StatelessWidget {
     final base = MarkdownStyleSheet.fromTheme(Theme.of(context));
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bodyColor = isDark ? const Color(0xFFD1D5DB) : p.onSurface;
-        
+
     final body = TextStyle(
-      color: bodyColor, 
-      height: 1.6, 
+      color: bodyColor,
+      height: 1.6,
       fontSize: 15,
       fontWeight: FontWeight.normal,
     );
@@ -798,11 +817,8 @@ class _MarkdownMessage extends StatelessWidget {
       fontWeight: FontWeight.w600,
       height: 1.3,
     );
-    final strong = TextStyle(
-      color: p.onSurface,
-      fontWeight: FontWeight.w700,
-    );
-    
+    final strong = TextStyle(color: p.onSurface, fontWeight: FontWeight.w700);
+
     return base.copyWith(
       p: body,
       h1: heading.copyWith(fontSize: 18),
@@ -1227,13 +1243,19 @@ class _InputPod extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Text(
-                  '${formatTokenCount(liveTokens)} / ${formatTokenCount(contextMax)}',
-                  style: TextStyle(
-                    color: p.onSurfaceVariant.withValues(alpha: 0.68),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    fontFeatures: const [FontFeature.tabularFigures()],
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minWidth: 64, maxWidth: 88),
+                  child: Text(
+                    '${formatTokenCount(liveTokens)} / ${formatTokenCount(contextMax)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      color: p.onSurfaceVariant.withValues(alpha: 0.68),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
                   ),
                 ),
               ],
@@ -1251,22 +1273,45 @@ class _InputPod extends StatelessWidget {
                   color: p.onSurfaceVariant,
                 ),
                 Expanded(
-                  child: TextField(
-                    controller: input,
-                    minLines: 2,
-                    maxLines: compact ? 7 : 10,
-                    style: TextStyle(
-                      color: p.onSurface,
-                      fontSize: 15,
-                      height: 1.35,
+                  child: Container(
+                    constraints: BoxConstraints(
+                      minHeight: 42,
+                      maxHeight: compact ? 132 : 178,
                     ),
-                    decoration: InputDecoration.collapsed(
-                      hintText: copy.t('chat', 'placeholder'),
-                      hintStyle: TextStyle(
-                        color: p.onSurfaceVariant.withValues(alpha: 0.55),
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: p.surface.withValues(alpha: p.isDark ? 0.28 : 0.9),
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(
+                        color: p.outline.withValues(alpha: 0.82),
                       ),
                     ),
-                    onSubmitted: (_) => onSend(),
+                    child: Center(
+                      child: TextField(
+                        controller: input,
+                        minLines: 1,
+                        maxLines: compact ? 5 : 7,
+                        style: TextStyle(
+                          color: p.onSurface,
+                          fontSize: 15,
+                          height: 1.32,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: copy.t('chat', 'placeholder'),
+                          hintStyle: TextStyle(
+                            color: p.onSurfaceVariant.withValues(alpha: 0.55),
+                          ),
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 10,
+                          ),
+                        ),
+                        onSubmitted: (_) => onSend(),
+                      ),
+                    ),
                   ),
                 ),
                 RoundIconButton(
@@ -1301,6 +1346,80 @@ class _InputPod extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _LiveVoiceOrb extends StatelessWidget {
+  const _LiveVoiceOrb({
+    required this.inputLevel,
+    required this.outputLevel,
+    required this.recording,
+    required this.connecting,
+  });
+
+  final double inputLevel;
+  final double outputLevel;
+  final bool recording;
+  final bool connecting;
+
+  @override
+  Widget build(BuildContext context) {
+    final activeLevel = math.max(inputLevel, outputLevel).clamp(0.0, 1.0);
+    final isOutput = outputLevel > inputLevel;
+    final size = 118.0 + activeLevel * 78;
+    final outerSize = size + 54 + activeLevel * 34;
+    final primary = isOutput
+        ? const Color(0xff60a5fa)
+        : const Color(0xff2563eb);
+    final secondary = isOutput
+        ? const Color(0xffa78bfa)
+        : const Color(0xff7dd3fc);
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 140),
+      curve: Curves.easeOut,
+      width: outerSize,
+      height: outerSize,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: primary.withValues(alpha: 0.08 + activeLevel * 0.08),
+        boxShadow: [
+          BoxShadow(
+            color: primary.withValues(alpha: 0.18 + activeLevel * 0.22),
+            blurRadius: 34 + activeLevel * 42,
+            spreadRadius: 4 + activeLevel * 14,
+          ),
+        ],
+      ),
+      child: Center(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: RadialGradient(
+              colors: [
+                secondary.withValues(alpha: 0.92),
+                primary.withValues(
+                  alpha: recording || connecting ? 0.82 : 0.46,
+                ),
+                Colors.black.withValues(alpha: 0.92),
+              ],
+              stops: const [0.0, 0.52, 1.0],
+            ),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+          ),
+          child: Icon(
+            connecting
+                ? LucideIcons.loaderCircle
+                : (isOutput ? LucideIcons.audioLines : LucideIcons.mic),
+            color: Colors.white,
+            size: 34 + activeLevel * 12,
+          ),
+        ),
       ),
     );
   }
@@ -1475,10 +1594,19 @@ class _LiveVideoStage extends StatelessWidget {
             ),
           ),
         ),
-        Positioned(
-          top: 14,
-          right: 16,
-          child: _LiveVideoTopControls(app: app),
+        Positioned(top: 14, right: 16, child: _LiveVideoTopControls(app: app)),
+        Positioned.fill(
+          child: IgnorePointer(
+            child: Align(
+              alignment: const Alignment(0, 0.26),
+              child: _LiveVoiceOrb(
+                inputLevel: app.liveInputLevel,
+                outputLevel: app.liveOutputLevel,
+                recording: app.isLiveRecording,
+                connecting: app.isLiveConnecting,
+              ),
+            ),
+          ),
         ),
         Positioned(
           left: 0,
@@ -1564,7 +1692,9 @@ class _LiveVideoTopControls extends StatelessWidget {
       children: [
         _LiveCircleButton(
           icon: LucideIcons.switchCamera,
-          tooltip: app.isLiveFrontCamera ? 'Use rear camera' : 'Use front camera',
+          tooltip: app.isLiveFrontCamera
+              ? 'Use rear camera'
+              : 'Use front camera',
           onPressed: app.toggleLiveCameraFacing,
         ),
         const SizedBox(width: 12),
@@ -1703,12 +1833,8 @@ class _LiveListeningCapsule extends StatelessWidget {
           end: Alignment.bottomCenter,
           colors: [
             Colors.black.withValues(alpha: 0.92),
-            const Color(0xff1d4ed8).withValues(
-              alpha: recording ? 0.94 : 0.56,
-            ),
-            const Color(0xff7dd3fc).withValues(
-              alpha: recording ? 0.92 : 0.48,
-            ),
+            const Color(0xff1d4ed8).withValues(alpha: recording ? 0.94 : 0.56),
+            const Color(0xff7dd3fc).withValues(alpha: recording ? 0.92 : 0.48),
           ],
         ),
         boxShadow: [

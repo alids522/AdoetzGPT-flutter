@@ -1,5 +1,7 @@
 package com.adoetz.adoetzgpt
 
+import android.content.Intent
+import android.os.Build
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
@@ -11,6 +13,7 @@ import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     private val liveAudioChannel = "adoetzgpt/live_audio"
+    private val liveForegroundChannel = "adoetzgpt/live_foreground"
     private var audioTrack: AudioTrack? = null
     private var audioExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
@@ -39,6 +42,27 @@ class MainActivity : FlutterActivity() {
                 }
                 "stop" -> {
                     stopPcmPlayback()
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            liveForegroundChannel
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "start" -> {
+                    val intent = Intent(this, LiveForegroundService::class.java)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(intent)
+                    } else {
+                        startService(intent)
+                    }
+                    result.success(null)
+                }
+                "stop" -> {
+                    stopService(Intent(this, LiveForegroundService::class.java))
                     result.success(null)
                 }
                 else -> result.notImplemented()

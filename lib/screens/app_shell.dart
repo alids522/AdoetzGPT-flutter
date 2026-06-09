@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
@@ -14,8 +16,15 @@ import 'chat_screen.dart';
 import 'settings_screen.dart';
 import 'token_usage_screen.dart';
 
-class AppShell extends StatelessWidget {
+class AppShell extends StatefulWidget {
   const AppShell({super.key});
+
+  @override
+  State<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<AppShell> {
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
   Widget build(BuildContext context) {
@@ -23,45 +32,59 @@ class AppShell extends StatelessWidget {
     final p = AppPalette.fromBrightness(
       Theme.of(context).brightness == Brightness.dark,
     );
-    final showHeader = !(app.currentView == AppView.chat && app.isLiveVideoEnabled);
-    return Scaffold(
-      drawer: const _AppDrawer(),
-      drawerScrimColor: Colors.black.withValues(alpha: 0.60),
-      backgroundColor: p.background,
-      body: SafeArea(
-        bottom: false,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: switch (app.currentView) {
-                AppView.chat => const ChatScreen(),
-                AppView.settings => const SettingsScreen(),
-                AppView.tokenUsage => const TokenUsageScreen(),
-              },
-            ),
-            if (showHeader)
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: Container(
-                  padding: const EdgeInsets.only(bottom: 24),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        p.background.withValues(alpha: 0.85),
-                        p.background.withValues(alpha: 0.40),
-                        p.background.withValues(alpha: 0.0),
-                      ],
-                      stops: const [0.2, 0.65, 1.0],
-                    ),
-                  ),
-                  child: const _Header(),
-                ),
+    final showHeader =
+        !(app.currentView == AppView.chat && app.isLiveVideoEnabled);
+    return PopScope(
+      canPop: kIsWeb,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
+          Navigator.of(context).pop();
+          return;
+        }
+        if (context.read<AdoetzAppState>().handleSystemBack()) return;
+        SystemNavigator.pop();
+      },
+      child: Scaffold(
+        key: _scaffoldKey,
+        drawer: const _AppDrawer(),
+        drawerScrimColor: Colors.black.withValues(alpha: 0.60),
+        backgroundColor: p.background,
+        body: SafeArea(
+          bottom: false,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: switch (app.currentView) {
+                  AppView.chat => const ChatScreen(),
+                  AppView.settings => const SettingsScreen(),
+                  AppView.tokenUsage => const TokenUsageScreen(),
+                },
               ),
-          ],
+              if (showHeader)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.only(bottom: 24),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          p.background.withValues(alpha: 0.85),
+                          p.background.withValues(alpha: 0.40),
+                          p.background.withValues(alpha: 0.0),
+                        ],
+                        stops: const [0.2, 0.65, 1.0],
+                      ),
+                    ),
+                    child: const _Header(),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -183,12 +206,16 @@ class _HeaderState extends State<_Header> {
               ),
             ),
           RoundIconButton(
-            icon: app.isDark ? LucideIcons.sun : LucideIcons.moon,
-            color: app.isDark
-                ? const Color(0xfffacc15)
-                : const Color(0xff94a3b8),
-            tooltip: 'Toggle theme',
-            onPressed: app.toggleTheme,
+            icon: app.currentSession.messages.isEmpty
+                ? LucideIcons.sparkles
+                : LucideIcons.edit2,
+            color: app.currentSession.messages.isEmpty
+                ? const Color(0xffa78bfa)
+                : p.onSurface,
+            tooltip: app.currentSession.messages.isEmpty
+                ? 'Temporary chat'
+                : 'New chat',
+            onPressed: app.headerChatShortcut,
           ),
         ],
       ),
@@ -204,8 +231,23 @@ class _HeaderState extends State<_Header> {
     final renderBox =
         _modelButtonKey.currentContext?.findRenderObject() as RenderBox?;
     final buttonSize = renderBox?.size ?? const Size(260, 40);
-    final screenWidth = MediaQuery.of(context).size.width;
-    final dropdownWidth = math.min(430.0, math.max(300.0, screenWidth - 24));
+    final buttonOffset =
+        renderBox?.localToGlobal(Offset.zero) ?? const Offset(12, 56);
+    final media = MediaQuery.of(context).size;
+    final screenWidth = media.width;
+    final compact = screenWidth < 560;
+    final dropdownWidth = compact
+        ? math.min(330.0, math.max(280.0, screenWidth - 56))
+        : math.min(390.0, math.max(300.0, screenWidth - 32));
+    final overflowRight = buttonOffset.dx + dropdownWidth - (screenWidth - 12);
+    final horizontalOffset = overflowRight > 0 ? -overflowRight : 0.0;
+    final maxHeight = math.max(
+      260.0,
+      math.min(
+        compact ? 390.0 : 470.0,
+        media.height - buttonOffset.dy - buttonSize.height - 24,
+      ),
+    );
     _modelOverlay = OverlayEntry(
       builder: (overlayContext) => Stack(
         children: [
@@ -221,13 +263,15 @@ class _HeaderState extends State<_Header> {
             showWhenUnlinked: false,
             targetAnchor: Alignment.bottomLeft,
             followerAnchor: Alignment.topLeft,
-            offset: const Offset(0, 8),
+            offset: Offset(horizontalOffset, 8),
             child: ChangeNotifierProvider.value(
               value: app,
               child: SizedBox(
                 width: dropdownWidth,
                 child: _ModelDropdown(
                   minWidth: buttonSize.width,
+                  maxHeight: maxHeight,
+                  compact: compact,
                   onClose: _hideModelPicker,
                 ),
               ),
@@ -258,12 +302,19 @@ class _HeaderState extends State<_Header> {
 }
 
 class _ModelDropdown extends StatefulWidget {
-  const _ModelDropdown({required this.minWidth, required this.onClose});
+  const _ModelDropdown({
+    required this.minWidth,
+    required this.maxHeight,
+    required this.compact,
+    required this.onClose,
+  });
 
   @override
   State<_ModelDropdown> createState() => _ModelDropdownState();
 
   final double minWidth;
+  final double maxHeight;
+  final bool compact;
   final VoidCallback onClose;
 }
 
@@ -282,11 +333,14 @@ class _ModelDropdownState extends State<_ModelDropdown> {
     return Material(
       color: Colors.transparent,
       child: ConstrainedBox(
-        constraints: BoxConstraints(minWidth: widget.minWidth, maxHeight: 470),
+        constraints: BoxConstraints(
+          minWidth: math.min(widget.minWidth, 330),
+          maxHeight: widget.maxHeight,
+        ),
         child: Container(
           decoration: BoxDecoration(
             color: p.isDark ? const Color(0xff111111) : Colors.white,
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(widget.compact ? 18 : 22),
             border: Border.all(color: p.outline),
             boxShadow: [
               BoxShadow(
@@ -300,7 +354,12 @@ class _ModelDropdownState extends State<_ModelDropdown> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(14, 12, 10, 10),
+                padding: EdgeInsets.fromLTRB(
+                  14,
+                  widget.compact ? 10 : 12,
+                  8,
+                  widget.compact ? 6 : 10,
+                ),
                 child: Row(
                   children: [
                     Icon(LucideIcons.bot, size: 16, color: p.primary),
@@ -338,7 +397,12 @@ class _ModelDropdownState extends State<_ModelDropdown> {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                padding: EdgeInsets.fromLTRB(
+                  14,
+                  0,
+                  14,
+                  widget.compact ? 8 : 12,
+                ),
                 child: TextField(
                   decoration: InputDecoration(
                     prefixIcon: const Icon(LucideIcons.search, size: 16),
@@ -399,6 +463,10 @@ class _ModelDropdownState extends State<_ModelDropdown> {
                           final endpointLabel = _endpointLabel(app, model);
                           return ListTile(
                             dense: true,
+                            minVerticalPadding: widget.compact ? 7 : 10,
+                            visualDensity: widget.compact
+                                ? VisualDensity.compact
+                                : VisualDensity.standard,
                             title: Text(
                               model,
                               maxLines: 1,
@@ -475,7 +543,9 @@ class _AppDrawerState extends State<_AppDrawer> {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AdoetzAppState>();
-    final activeSessions = app.activeSessions;
+    final activeSessions = app.activeSessions
+        .where((session) => !session.temporary)
+        .toList();
     final copy = UiCopy(app.language);
     final p = AppPalette.fromBrightness(
       Theme.of(context).brightness == Brightness.dark,
@@ -548,7 +618,10 @@ class _AppDrawerState extends State<_AppDrawer> {
             Expanded(
               child: ListView.builder(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                itemCount: 1 + activeSessions.length + (activeSessions.isNotEmpty ? 1 : 0),
+                itemCount:
+                    1 +
+                    activeSessions.length +
+                    (activeSessions.isNotEmpty ? 1 : 0),
                 itemBuilder: (context, index) {
                   if (index == 0) {
                     return Padding(

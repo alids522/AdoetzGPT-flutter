@@ -265,6 +265,58 @@ class AiService {
     );
   }
 
+  Future<String> generateTitle({
+    required String message,
+    required String selectedModel,
+    required List<EndpointConfig> endpoints,
+    required List<EndpointModel> endpointModels,
+    required String geminiApiKey,
+    required SyncSettings syncSettings,
+  }) async {
+    final modelName = selectedModel.trim().isEmpty
+        ? 'gemini-2.5-flash'
+        : selectedModel.trim();
+    final titlePrompt =
+        'Create a short title (maximum 3 to 4 words) for the following message.\n'
+        'Output ONLY the title. Do not use quotation marks, punctuation, or any introductory text.\n\n'
+        '$message';
+    final endpointModel = _resolveEndpointModel(
+      modelName,
+      endpoints,
+      endpointModels,
+    );
+    final endpoint = endpointModel == null
+        ? null
+        : endpoints
+              .where((item) => item.id == endpointModel.endpointId)
+              .cast<EndpointConfig?>()
+              .firstOrNull;
+
+    try {
+      if (endpoint != null &&
+          endpoint.url.trim().isNotEmpty &&
+          endpoint.key.trim().isNotEmpty) {
+        return _sanitizeTitle(
+          await _generateEndpointTitle(
+            prompt: titlePrompt,
+            selectedModel: modelName,
+            endpoint: endpoint,
+            syncSettings: syncSettings,
+          ),
+        );
+      }
+      return _sanitizeTitle(
+        await _generateGeminiTitle(
+          prompt: titlePrompt,
+          selectedModel: modelName,
+          geminiApiKey: geminiApiKey,
+        ),
+      );
+    } catch (_) {
+      return _sanitizeTitle(message);
+    }
+  }
+
   Future<GeneratedResponse> _sendEndpoint({
     required String prompt,
     required List<AttachmentData> attachments,
@@ -518,6 +570,109 @@ class AiService {
       outputTokens: outputTokens,
       endpointName: 'Gemini',
     );
+  }
+
+  Future<String> _generateEndpointTitle({
+    required String prompt,
+    required String selectedModel,
+    required EndpointConfig endpoint,
+    required SyncSettings syncSettings,
+  }) async {
+    final request =
+        http.Request(
+            'POST',
+            Uri.parse('${_endpointBase(endpoint.url)}/chat/completions'),
+          )
+          ..headers.addAll({
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${endpoint.key}',
+          })
+          ..body = jsonEncode({
+            'model': selectedModel,
+            'messages': [
+              {
+                'role': 'system',
+                'content':
+                    'You create concise chat titles. Reply with only the title.',
+              },
+              {'role': 'user', 'content': prompt},
+            ],
+            'stream': false,
+            'temperature': 0.2,
+            'max_tokens': 24,
+          });
+
+    final streamed = await _sendWithProxyFallback(request, syncSettings);
+    final body = await streamed.stream.bytesToString();
+    if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+      throw Exception(_extractApiError(body, 'Title generation failed.'));
+    }
+    final data = jsonDecode(body);
+    final choices = data['choices'];
+    if (choices is List && choices.isNotEmpty) {
+      final choice = choices.first;
+      if (choice is Map) {
+        final message = choice['message'];
+        if (message is Map) {
+          final content = stringValue(message['content']).trim();
+          if (content.isNotEmpty) return content;
+        }
+        final text = stringValue(choice['text']).trim();
+        if (text.isNotEmpty) return text;
+      }
+    }
+    return '';
+  }
+
+  Future<String> _generateGeminiTitle({
+    required String prompt,
+    required String selectedModel,
+    required String geminiApiKey,
+  }) async {
+    final key = geminiApiKey.trim();
+    if (key.isEmpty) return '';
+    final model = selectedModel.replaceFirst('models/', '');
+    final uri = Uri.https(
+      'generativelanguage.googleapis.com',
+      '/v1beta/models/$model:generateContent',
+      {'key': key},
+    );
+    final response = await _client
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'contents': [
+              {
+                'role': 'user',
+                'parts': [
+                  {'text': prompt},
+                ],
+              },
+            ],
+            'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 24},
+          }),
+        )
+        .timeout(const Duration(seconds: 18));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        _extractApiError(response.body, 'Gemini title generation failed.'),
+      );
+    }
+    return _geminiText(jsonDecode(response.body));
+  }
+
+  String _sanitizeTitle(String value) {
+    final cleaned = value
+        .replaceAll(RegExp(r'^title:\s*', caseSensitive: false), '')
+        .replaceAll(RegExp(r'''["'`_*#\[\]()]'''), '')
+        .replaceAll(RegExp(r'[^\w\s-]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim()
+        .split(RegExp(r'\s+'))
+        .take(4)
+        .join(' ');
+    return cleaned.length > 42 ? cleaned.substring(0, 42).trim() : cleaned;
   }
 
   Future<http.StreamedResponse> _sendWithProxyFallback(

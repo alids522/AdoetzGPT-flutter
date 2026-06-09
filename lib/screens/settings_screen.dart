@@ -73,6 +73,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 28),
               _ProfileSection(copy: copy),
               const SizedBox(height: 22),
+              const _ExperienceSection(),
+              const SizedBox(height: 22),
               const _MemorySection(),
               const SizedBox(height: 22),
               _SyncSection(
@@ -137,6 +139,57 @@ class _ProfileSection extends StatelessWidget {
               SegmentItem(value: AppLanguage.en, label: 'English'),
             ],
             onChanged: (value) => app.updateProfile(nextLanguage: value),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExperienceSection extends StatelessWidget {
+  const _ExperienceSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SectionHeader(
+            icon: LucideIcons.slidersHorizontal,
+            title: 'Experience',
+            accent: Color(0xff38bdf8),
+          ),
+          const SizedBox(height: 12),
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            value: app.isDark,
+            onChanged: (_) => app.toggleTheme(),
+            title: const Text('Dark mode'),
+            subtitle: Text(
+              app.isDark
+                  ? 'Dark interface is active.'
+                  : 'Light interface is active.',
+              style: TextStyle(color: p.onSurfaceVariant, fontSize: 12),
+            ),
+          ),
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            value: app.genSettings.hapticStreamingEnabled,
+            onChanged: (value) => app.updateGenerationSettings(
+              app.genSettings.copyWith(hapticStreamingEnabled: value),
+            ),
+            title: const Text('Streaming haptics'),
+            subtitle: Text(
+              'Vibrate lightly while Android streams model responses.',
+              style: TextStyle(color: p.onSurfaceVariant, fontSize: 12),
+            ),
           ),
         ],
       ),

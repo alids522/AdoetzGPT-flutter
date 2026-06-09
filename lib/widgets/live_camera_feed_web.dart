@@ -112,9 +112,7 @@ class _LiveCameraFeedState extends State<LiveCameraFeed> {
 
   JSAny _videoConstraints() {
     return {
-      'facingMode': {
-        'ideal': widget.useFrontCamera ? 'user' : 'environment',
-      },
+      'facingMode': {'ideal': widget.useFrontCamera ? 'user' : 'environment'},
       'width': {'ideal': 1280},
       'height': {'ideal': 720},
       'frameRate': {'ideal': 15, 'max': 24},
@@ -124,7 +122,9 @@ class _LiveCameraFeedState extends State<LiveCameraFeed> {
   void _captureFrame() {
     if (!mounted || _capturing) return;
     final app = context.read<AdoetzAppState>();
-    if (!app.isLiveActive || _video.videoWidth <= 0 || _video.videoHeight <= 0) {
+    if (!app.isLiveActive ||
+        _video.videoWidth <= 0 ||
+        _video.videoHeight <= 0) {
       return;
     }
 
@@ -133,18 +133,19 @@ class _LiveCameraFeedState extends State<LiveCameraFeed> {
       final width = _video.videoWidth;
       final height = _video.videoHeight;
       final largestSide = math.max(width, height);
-      final scale = largestSide > 640 ? 640 / largestSide : 1.0;
+      final scale = largestSide > 960 ? 960 / largestSide : 1.0;
       final targetWidth = math.max(1, (width * scale).round());
       final targetHeight = math.max(1, (height * scale).round());
       final canvas = _canvas ??= web.HTMLCanvasElement();
       canvas.width = targetWidth;
       canvas.height = targetHeight;
 
-      final context2d = canvas.getContext('2d') as web.CanvasRenderingContext2D?;
+      final context2d =
+          canvas.getContext('2d') as web.CanvasRenderingContext2D?;
       if (context2d == null) return;
       context2d.drawImage(_video, 0, 0, targetWidth, targetHeight);
 
-      final dataUrl = canvas.toDataURL('image/jpeg', 0.68.toJS);
+      final dataUrl = canvas.toDataURL('image/jpeg', 0.78.toJS);
       final comma = dataUrl.indexOf(',');
       if (comma == -1) return;
       final bytes = base64Decode(dataUrl.substring(comma + 1));

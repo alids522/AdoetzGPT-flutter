@@ -40,7 +40,9 @@ class _LiveCameraFeedState extends State<LiveCameraFeed> {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
         if (mounted) {
-          setState(() => _error = 'No cameras found. Please check permissions.');
+          setState(
+            () => _error = 'No cameras found. Please check permissions.',
+          );
         }
         return;
       }
@@ -54,7 +56,7 @@ class _LiveCameraFeedState extends State<LiveCameraFeed> {
       );
       final controller = CameraController(
         preferred,
-        ResolutionPreset.low,
+        ResolutionPreset.high,
         enableAudio: false,
       );
       _controller = controller;

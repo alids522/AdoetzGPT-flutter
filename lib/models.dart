@@ -148,6 +148,7 @@ class Session {
     required this.updatedAt,
     this.pinned = false,
     this.deleted = false,
+    this.temporary = false,
   });
 
   final String id;
@@ -156,6 +157,7 @@ class Session {
   final int updatedAt;
   final bool pinned;
   final bool deleted;
+  final bool temporary;
 
   Session copyWith({
     String? title,
@@ -163,6 +165,7 @@ class Session {
     int? updatedAt,
     bool? pinned,
     bool? deleted,
+    bool? temporary,
   }) {
     return Session(
       id: id,
@@ -171,6 +174,7 @@ class Session {
       updatedAt: updatedAt ?? this.updatedAt,
       pinned: pinned ?? this.pinned,
       deleted: deleted ?? this.deleted,
+      temporary: temporary ?? this.temporary,
     );
   }
 
@@ -195,6 +199,7 @@ class Session {
       ),
       pinned: boolValue(json['pinned']),
       deleted: boolValue(json['deleted']),
+      temporary: boolValue(json['temporary']),
     );
   }
 
@@ -205,6 +210,7 @@ class Session {
     'updatedAt': updatedAt,
     if (pinned) 'pinned': pinned,
     if (deleted) 'deleted': deleted,
+    if (temporary) 'temporary': temporary,
   };
 }
 
@@ -286,6 +292,7 @@ class GenerationSettings {
     this.googleSearchApiKey = '',
     this.googleSearchCx = '',
     this.tavilyApiKey = '',
+    this.hapticStreamingEnabled = false,
   });
 
   final String imageModel;
@@ -299,6 +306,7 @@ class GenerationSettings {
   final String googleSearchApiKey;
   final String googleSearchCx;
   final String tavilyApiKey;
+  final bool hapticStreamingEnabled;
 
   GenerationSettings copyWith({
     String? imageModel,
@@ -312,6 +320,7 @@ class GenerationSettings {
     String? googleSearchApiKey,
     String? googleSearchCx,
     String? tavilyApiKey,
+    bool? hapticStreamingEnabled,
   }) {
     final nextEngine = webSearchEngine ?? this.webSearchEngine;
     return GenerationSettings(
@@ -328,6 +337,8 @@ class GenerationSettings {
       googleSearchApiKey: googleSearchApiKey ?? this.googleSearchApiKey,
       googleSearchCx: googleSearchCx ?? this.googleSearchCx,
       tavilyApiKey: tavilyApiKey ?? this.tavilyApiKey,
+      hapticStreamingEnabled:
+          hapticStreamingEnabled ?? this.hapticStreamingEnabled,
     );
   }
 
@@ -354,6 +365,7 @@ class GenerationSettings {
       googleSearchApiKey: stringValue(json['googleSearchApiKey']),
       googleSearchCx: stringValue(json['googleSearchCx']),
       tavilyApiKey: stringValue(json['tavilyApiKey']),
+      hapticStreamingEnabled: boolValue(json['hapticStreamingEnabled']),
     );
   }
 
@@ -369,6 +381,7 @@ class GenerationSettings {
     'googleSearchApiKey': googleSearchApiKey,
     'googleSearchCx': googleSearchCx,
     'tavilyApiKey': tavilyApiKey,
+    'hapticStreamingEnabled': hapticStreamingEnabled,
   };
 }
 
@@ -889,7 +902,10 @@ class PersistedAppState {
         .toList(),
     'genSettings': genSettings.toJson(),
     'voiceSettings': voiceSettings.toJson(),
-    'sessions': sessions.map((item) => item.toJson()).toList(),
+    'sessions': sessions
+        .where((item) => !item.temporary)
+        .map((item) => item.toJson())
+        .toList(),
     'currentSessionId': currentSessionId,
     'memories': memories.map((item) => item.toJson()).toList(),
     'tokenUsageData': tokenUsageData.map((item) => item.toJson()).toList(),

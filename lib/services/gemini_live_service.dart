@@ -189,7 +189,7 @@ class GeminiLiveService {
         'model': _formatLiveModel(model),
         'generationConfig': {
           'responseModalities': ['AUDIO'],
-          'mediaResolution': 'MEDIA_RESOLUTION_LOW',
+          'mediaResolution': 'MEDIA_RESOLUTION_MEDIUM',
           'speechConfig': {
             'voiceConfig': {
               'prebuiltVoiceConfig': {'voiceName': _voiceName()},
