@@ -1264,42 +1264,33 @@ class _InputPod extends StatelessWidget {
                 Expanded(
                   child: Container(
                     constraints: BoxConstraints(
-                      minHeight: 42,
-                      maxHeight: compact ? 132 : 178,
+                      minHeight: 38,
+                      maxHeight: compact ? 100 : 120,
                     ),
                     padding: const EdgeInsets.symmetric(horizontal: 14),
-                    decoration: BoxDecoration(
-                      color: p.surface.withValues(alpha: p.isDark ? 0.28 : 0.9),
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(
-                        color: p.outline.withValues(alpha: 0.82),
+                    child: TextField(
+                      controller: input,
+                      minLines: 1,
+                      maxLines: compact ? 3 : 4,
+                      style: TextStyle(
+                        color: p.onSurface,
+                        fontSize: 15,
+                        height: 1.32,
                       ),
-                    ),
-                    child: Center(
-                      child: TextField(
-                        controller: input,
-                        minLines: 1,
-                        maxLines: compact ? 5 : 7,
-                        style: TextStyle(
-                          color: p.onSurface,
-                          fontSize: 15,
-                          height: 1.32,
+                      decoration: InputDecoration(
+                        hintText: copy.t('chat', 'placeholder'),
+                        hintStyle: TextStyle(
+                          color: p.onSurfaceVariant.withValues(alpha: 0.55),
                         ),
-                        decoration: InputDecoration(
-                          hintText: copy.t('chat', 'placeholder'),
-                          hintStyle: TextStyle(
-                            color: p.onSurfaceVariant.withValues(alpha: 0.55),
-                          ),
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            vertical: 10,
-                          ),
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          vertical: 8,
                         ),
-                        onSubmitted: (_) => onSend(),
                       ),
+                      onSubmitted: (_) => onSend(),
                     ),
                   ),
                 ),
@@ -1340,79 +1331,6 @@ class _InputPod extends StatelessWidget {
   }
 }
 
-class _LiveVoiceOrb extends StatelessWidget {
-  const _LiveVoiceOrb({
-    required this.inputLevel,
-    required this.outputLevel,
-    required this.recording,
-    required this.connecting,
-  });
-
-  final double inputLevel;
-  final double outputLevel;
-  final bool recording;
-  final bool connecting;
-
-  @override
-  Widget build(BuildContext context) {
-    final activeLevel = math.max(inputLevel, outputLevel).clamp(0.0, 1.0);
-    final isOutput = outputLevel > inputLevel;
-    final size = 118.0 + activeLevel * 78;
-    final outerSize = size + 54 + activeLevel * 34;
-    final primary = isOutput
-        ? const Color(0xff60a5fa)
-        : const Color(0xff2563eb);
-    final secondary = isOutput
-        ? const Color(0xffa78bfa)
-        : const Color(0xff7dd3fc);
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 140),
-      curve: Curves.easeOut,
-      width: outerSize,
-      height: outerSize,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: primary.withValues(alpha: 0.08 + activeLevel * 0.08),
-        boxShadow: [
-          BoxShadow(
-            color: primary.withValues(alpha: 0.18 + activeLevel * 0.22),
-            blurRadius: 34 + activeLevel * 42,
-            spreadRadius: 4 + activeLevel * 14,
-          ),
-        ],
-      ),
-      child: Center(
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          curve: Curves.easeOut,
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: RadialGradient(
-              colors: [
-                secondary.withValues(alpha: 0.92),
-                primary.withValues(
-                  alpha: recording || connecting ? 0.82 : 0.46,
-                ),
-                Colors.black.withValues(alpha: 0.92),
-              ],
-              stops: const [0.0, 0.52, 1.0],
-            ),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-          ),
-          child: Icon(
-            connecting
-                ? LucideIcons.loaderCircle
-                : (isOutput ? LucideIcons.audioLines : LucideIcons.mic),
-            color: Colors.white,
-            size: 34 + activeLevel * 12,
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 class _VoiceOverlay extends StatelessWidget {
   const _VoiceOverlay({
