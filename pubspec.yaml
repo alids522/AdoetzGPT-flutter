@@ -40,6 +40,9 @@ dependencies:
   # releases can generate a registrant entry for a Kotlin class that is not
   # visible during CI's Java compile step.
   file_picker: 8.3.7
+  # Keep this transitive Android plugin at a compileSdk-34-compatible release
+  # because file_picker 8.3.7 hardcodes compileSdk 34 in its Android module.
+  flutter_plugin_android_lifecycle: 2.0.22
   image_picker: ^1.2.2
   flutter_markdown: ^0.7.7+1
   url_launcher: ^6.3.2
