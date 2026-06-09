@@ -1,0 +1,1102 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+
+import '../models.dart';
+
+typedef TextDelta = void Function(String text);
+typedef StatusCallback = void Function(String status);
+
+class GeneratedResponse {
+  const GeneratedResponse({
+    required this.text,
+    required this.inputTokens,
+    required this.outputTokens,
+    required this.endpointName,
+  });
+
+  final String text;
+  final int inputTokens;
+  final int outputTokens;
+  final String endpointName;
+}
+
+class ModelCatalog {
+  const ModelCatalog({
+    required this.geminiModels,
+    required this.endpointModels,
+    this.warnings = const [],
+  });
+
+  final List<String> geminiModels;
+  final List<EndpointModel> endpointModels;
+  final List<String> warnings;
+
+  List<String> combined() {
+    final values = <String>[
+      'gemini-2.5-flash',
+      ...geminiModels,
+      ...endpointModels.map((item) => item.name),
+    ];
+    return LinkedHashSetString(values).toList();
+  }
+}
+
+class AiService {
+  final http.Client _client = http.Client();
+
+  static const _textPrompts = {
+    'Assistant':
+        'You are a highly efficient, polished, and helpful digital assistant. Provide clear, structured, and accurate information. Use Markdown for better readability when appropriate. Maintain a professional yet approachable writing style.',
+    'Therapist':
+        'You are an empathetic and supportive therapist. Provide thoughtful, reflective responses. Focus on validating the user feelings and offering gentle guidance for self-reflection. Use warm and patient language.',
+    'Story teller':
+        'You are a creative and descriptive storyteller. Use rich language, evocative imagery, and varied sentence structure to bring your narratives to life. Structure your stories with clear arcs and engaging hooks.',
+    'Meditation':
+        'You are a calm meditation guide. Use peaceful, mindfulness-focused language. Provide short, rhythmic instructions for relaxation and grounding.',
+    'Doctor':
+        'You are a professional and reassuring medical consultant. Provide precise, evidence-based, and clear explanations.',
+    'Argumentative':
+        'You are a sharp-witted debater. Challenge points with logic, evidence, and structured counter-arguments while remaining professional.',
+    'Romantic':
+        'You are a poetic and expressive companion. Use warm, affectionate, and artistic language.',
+    'Conspiracy':
+        'You are an intense and analytical investigator of hidden truths. Use an urgent, skeptical writing style.',
+    'Natural human':
+        'You are having a casual text conversation. Use informal language, contractions, and natural-sounding sentence structures.',
+  };
+
+  Future<ModelCatalog> fetchModels({
+    required String geminiApiKey,
+    required List<EndpointConfig> endpoints,
+    required SyncSettings syncSettings,
+  }) async {
+    final geminiModels = <String>[];
+    final warnings = <String>[];
+    if (geminiApiKey.trim().isNotEmpty) {
+      try {
+        final uri = Uri.https(
+          'generativelanguage.googleapis.com',
+          '/v1beta/models',
+          {'key': geminiApiKey.trim()},
+        );
+        final response = await _client
+            .get(uri)
+            .timeout(const Duration(seconds: 10));
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final data = jsonDecode(response.body);
+          final models = data['models'] is List
+              ? data['models'] as List
+              : const [];
+          for (final item in models.whereType<Map>()) {
+            final name = stringValue(item['name']).replaceFirst('models/', '');
+            final methods = item['supportedGenerationMethods'];
+            if (name.isNotEmpty &&
+                (methods is! List ||
+                    methods.contains('generateContent') ||
+                    methods.contains('streamGenerateContent') ||
+                    methods.contains('bidiGenerateContent'))) {
+              geminiModels.add(name);
+            }
+          }
+        }
+      } catch (error) {
+        warnings.add(
+          'Gemini models could not be fetched: ${_cleanError(error)}',
+        );
+      }
+    }
+    if (geminiModels.isEmpty) {
+      geminiModels.addAll(const [
+        'gemini-2.0-flash',
+        'gemini-1.5-pro',
+        'gemini-1.5-flash',
+      ]);
+    }
+
+    final endpointModels = <EndpointModel>[];
+    for (final endpoint in endpoints) {
+      if (endpoint.models.isNotEmpty) {
+        endpointModels.addAll(
+          endpoint.models.map(
+            (model) => EndpointModel(name: model, endpointId: endpoint.id),
+          ),
+        );
+      }
+      if (endpoint.url.trim().isEmpty) {
+        continue;
+      }
+      if (endpoint.key.trim().isEmpty || endpoint.key == 'sk-...') {
+        warnings.add('${endpoint.name} has no API key for model fetch.');
+        continue;
+      }
+      if (endpoint.skipModelFetch) {
+        continue;
+      }
+      try {
+        final response = await _getWithProxyFallback(
+          Uri.parse('${_endpointBase(endpoint.url)}/models'),
+          {'Authorization': 'Bearer ${endpoint.key}'},
+          syncSettings,
+        );
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final data = jsonDecode(response.body);
+          endpointModels.addAll(
+            _extractModelIds(
+              data,
+            ).map((name) => EndpointModel(name: name, endpointId: endpoint.id)),
+          );
+        } else {
+          warnings.add(
+            '${endpoint.name} model fetch failed (${response.statusCode}): ${_extractApiError(response.body, 'No response body.')}',
+          );
+        }
+      } catch (error) {
+        warnings.add(
+          '${endpoint.name} model fetch failed: ${_cleanError(error)}',
+        );
+      }
+    }
+
+    final seen = <String>{};
+    final endpointSeen = <String>{};
+    return ModelCatalog(
+      geminiModels: geminiModels.where((model) => seen.add(model)).toList(),
+      endpointModels: endpointModels
+          .where((model) => model.name.isNotEmpty)
+          .where(
+            (model) => endpointSeen.add('${model.endpointId}:${model.name}'),
+          )
+          .toList(),
+      warnings: warnings,
+    );
+  }
+
+  Future<GeneratedResponse> sendMessage({
+    required String prompt,
+    required List<AttachmentData> attachments,
+    required List<Message> history,
+    required String selectedModel,
+    required List<EndpointConfig> endpoints,
+    required List<EndpointModel> endpointModels,
+    required GenerationSettings genSettings,
+    required VoiceSettings voiceSettings,
+    required String geminiApiKey,
+    required List<Memory> memories,
+    required bool thinkingMode,
+    required bool artifactMode,
+    required SyncSettings syncSettings,
+    required TextDelta onText,
+    required StatusCallback onStatus,
+  }) async {
+    final modelName = selectedModel.trim().isEmpty
+        ? 'gemini-2.5-flash'
+        : selectedModel.trim();
+    final endpointModel = _resolveEndpointModel(
+      modelName,
+      endpoints,
+      endpointModels,
+    );
+    final endpoint = endpointModel == null
+        ? null
+        : endpoints
+              .where((item) => item.id == endpointModel.endpointId)
+              .cast<EndpointConfig?>()
+              .firstOrNull;
+
+    var searchContext = '';
+    final shouldSearch = await _shouldSearch(
+      prompt,
+      modelName,
+      endpoint,
+      genSettings,
+      geminiApiKey,
+    );
+    if (shouldSearch) {
+      try {
+        searchContext = await _performSearch(
+          prompt,
+          genSettings,
+          endpoints,
+          endpointModels,
+          geminiApiKey,
+          syncSettings,
+          onStatus,
+        );
+      } catch (error) {
+        onStatus('${_cleanError(error)}. Answering without web results...');
+      }
+    }
+
+    if (endpoint != null &&
+        endpoint.url.trim().isNotEmpty &&
+        endpoint.key.trim().isNotEmpty) {
+      return _sendEndpoint(
+        prompt: prompt,
+        attachments: attachments,
+        history: history,
+        selectedModel: modelName,
+        endpoint: endpoint,
+        searchContext: searchContext,
+        voiceSettings: voiceSettings,
+        memories: memories,
+        thinkingMode: thinkingMode,
+        artifactMode: artifactMode,
+        syncSettings: syncSettings,
+        onText: onText,
+      );
+    }
+
+    return _sendGemini(
+      prompt: prompt,
+      attachments: attachments,
+      history: history,
+      selectedModel: modelName,
+      searchContext: searchContext,
+      voiceSettings: voiceSettings,
+      geminiApiKey: geminiApiKey,
+      memories: memories,
+      thinkingMode: thinkingMode,
+      artifactMode: artifactMode,
+      onText: onText,
+    );
+  }
+
+  Future<GeneratedResponse> _sendEndpoint({
+    required String prompt,
+    required List<AttachmentData> attachments,
+    required List<Message> history,
+    required String selectedModel,
+    required EndpointConfig endpoint,
+    required String searchContext,
+    required VoiceSettings voiceSettings,
+    required List<Memory> memories,
+    required bool thinkingMode,
+    required bool artifactMode,
+    required SyncSettings syncSettings,
+    required TextDelta onText,
+  }) async {
+    final systemText =
+        '${_systemText(voiceSettings)}${thinkingMode ? ' Start with concise reasoning enclosed in <think>...</think> tags before the final answer.' : ''}\n\nPay attention to any user context or memories shared in the conversation.${artifactMode ? _artifactInstruction : ''}';
+    final memoryText = memories.isEmpty
+        ? ''
+        : '\n\n=== IMPORTANT USER CONTEXT ===\n${memories.map((m) => '- ${m.content}').join('\n')}\n=== END USER CONTEXT ===\n\n';
+    final finalPrompt = '$memoryText$searchContext$prompt';
+    final content = attachments.isEmpty
+        ? finalPrompt
+        : [
+            {'type': 'text', 'text': finalPrompt},
+            ...attachments.map((file) {
+              if (file.type.startsWith('image/')) {
+                return {
+                  'type': 'image_url',
+                  'image_url': {'url': 'data:${file.type};base64,${file.data}'},
+                };
+              }
+              return {
+                'type': 'text',
+                'text': '\n[Attached file: ${file.name} (${file.type})]',
+              };
+            }),
+          ];
+
+    final messages = [
+      {'role': 'system', 'content': systemText},
+      ..._openAiHistory(
+        history,
+        max(4000, (contextWindow(selectedModel) * 0.6).floor()),
+      ),
+      {'role': 'user', 'content': content},
+    ];
+
+    final payload = {
+      'model': selectedModel,
+      'messages': messages,
+      'stream': true,
+      'stream_options': {'include_usage': true},
+    };
+
+    final request =
+        http.Request(
+            'POST',
+            Uri.parse('${_endpointBase(endpoint.url)}/chat/completions'),
+          )
+          ..headers.addAll({
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${endpoint.key}',
+          })
+          ..body = jsonEncode(payload);
+
+    final streamed = await _sendWithProxyFallback(request, syncSettings);
+    if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+      final body = await streamed.stream.bytesToString();
+      throw Exception(_extractApiError(body, 'Failed to connect to endpoint.'));
+    }
+
+    final buffer = StringBuffer();
+    var inputTokens =
+        countTokens(finalPrompt) +
+        countTokens(systemText) +
+        history.fold<int>(0, (sum, item) => sum + countTokens(item.text));
+    var outputTokens = 0;
+    var inReasoning = false;
+
+    await for (final line
+        in streamed.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
+      final trimmed = line.trim();
+      if (!trimmed.startsWith('data: ')) continue;
+      final dataText = trimmed.substring(6).trim();
+      if (dataText == '[DONE]') break;
+      try {
+        final data = jsonDecode(dataText);
+        final usage = data['usage'];
+        if (usage is Map) {
+          inputTokens = intValue(usage['prompt_tokens'], inputTokens);
+          outputTokens = intValue(usage['completion_tokens'], outputTokens);
+        }
+        final choice =
+            data['choices'] is List && (data['choices'] as List).isNotEmpty
+            ? data['choices'][0]
+            : null;
+        final delta = choice is Map ? choice['delta'] : null;
+        if (delta is Map && delta['reasoning_content'] != null) {
+          if (!inReasoning) {
+            inReasoning = true;
+            buffer.write('<think>\n');
+          }
+          final text = stringValue(delta['reasoning_content']);
+          buffer.write(text);
+          onText(buffer.toString());
+        }
+        final content = delta is Map
+            ? stringValue(delta['content'])
+            : stringValue(choice is Map ? choice['text'] : '');
+        if (content.isNotEmpty) {
+          if (inReasoning) {
+            inReasoning = false;
+            buffer.write('\n</think>\n');
+          }
+          buffer.write(content);
+          onText(buffer.toString());
+        }
+      } catch (_) {}
+    }
+    if (inReasoning) buffer.write('\n</think>\n');
+    outputTokens = outputTokens == 0
+        ? countTokens(buffer.toString())
+        : outputTokens;
+    return GeneratedResponse(
+      text: buffer.toString(),
+      inputTokens: inputTokens,
+      outputTokens: outputTokens,
+      endpointName: endpoint.name,
+    );
+  }
+
+  Future<GeneratedResponse> _sendGemini({
+    required String prompt,
+    required List<AttachmentData> attachments,
+    required List<Message> history,
+    required String selectedModel,
+    required String searchContext,
+    required VoiceSettings voiceSettings,
+    required String geminiApiKey,
+    required List<Memory> memories,
+    required bool thinkingMode,
+    required bool artifactMode,
+    required TextDelta onText,
+  }) async {
+    final key = geminiApiKey.trim();
+    if (key.isEmpty) {
+      throw Exception(
+        'Gemini API key not found. Please provide one in Settings.',
+      );
+    }
+
+    final model = selectedModel.replaceFirst('models/', '');
+    final memoryList = memories.isEmpty
+        ? 'No existing memories.'
+        : memories.map((m) => '- ${m.content}').join('\n');
+    final systemText =
+        '${_systemText(voiceSettings)}${thinkingMode ? ' Start with a thinking process enclosed in <think>...</think> tags before the final answer.' : ''}\n\nFORMATTING RULE: When providing code, always wrap it in Markdown triple backticks with the appropriate language identifier.${artifactMode ? _artifactInstruction : ''}\n\nCurrent Long-term Memories:\n$memoryList';
+    final contents = [
+      ..._geminiHistory(
+        history,
+        max(4000, (contextWindow(selectedModel) * 0.6).floor()),
+      ),
+      {
+        'role': 'user',
+        'parts': [
+          {'text': '$searchContext$prompt'},
+          ...attachments.map(
+            (file) => {
+              'inlineData': {'data': file.data, 'mimeType': file.type},
+            },
+          ),
+        ],
+      },
+    ];
+
+    final body = {
+      'systemInstruction': {
+        'parts': [
+          {'text': systemText},
+        ],
+      },
+      'contents': contents,
+      'generationConfig': {
+        'maxOutputTokens': 65536,
+        if (thinkingMode && model.toLowerCase().contains('thinking'))
+          'thinkingConfig': {'includeThoughts': true},
+      },
+    };
+
+    final uri = Uri.https(
+      'generativelanguage.googleapis.com',
+      '/v1beta/models/$model:streamGenerateContent',
+      {'key': key, 'alt': 'sse'},
+    );
+    final request = http.Request('POST', uri)
+      ..headers['Content-Type'] = 'application/json'
+      ..body = jsonEncode(body);
+    final streamed = await _client.send(request);
+    if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+      final error = await streamed.stream.bytesToString();
+      throw Exception(_extractApiError(error, 'Gemini request failed.'));
+    }
+
+    final buffer = StringBuffer();
+    var inThought = false;
+    await for (final line
+        in streamed.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
+      final trimmed = line.trim();
+      if (!trimmed.startsWith('data: ')) continue;
+      try {
+        final data = jsonDecode(trimmed.substring(6));
+        final parts = data['candidates']?[0]?['content']?['parts'];
+        if (parts is! List) continue;
+        for (final part in parts.whereType<Map>()) {
+          final isThought = part['thought'] == true;
+          if (isThought && !inThought) {
+            inThought = true;
+            buffer.write('<think>\n');
+          } else if (!isThought && inThought) {
+            inThought = false;
+            buffer.write('\n</think>\n');
+          }
+          if (part['text'] != null) buffer.write(stringValue(part['text']));
+          if (part['executableCode'] is Map) {
+            buffer.write(
+              '\n```python\n${stringValue(part['executableCode']['code'])}\n```\n',
+            );
+          }
+          if (part['executionResult'] is Map) {
+            buffer.write(
+              '\n```\n${stringValue(part['executionResult']['output'])}\n```\n',
+            );
+          }
+        }
+        onText(buffer.toString());
+      } catch (_) {}
+    }
+    if (inThought) buffer.write('\n</think>\n');
+    final inputTokens =
+        countTokens(prompt) +
+        countTokens(systemText) +
+        history.fold<int>(0, (sum, item) => sum + countTokens(item.text));
+    final outputTokens = countTokens(buffer.toString());
+    return GeneratedResponse(
+      text: buffer.toString(),
+      inputTokens: inputTokens,
+      outputTokens: outputTokens,
+      endpointName: 'Gemini',
+    );
+  }
+
+  Future<http.StreamedResponse> _sendWithProxyFallback(
+    http.Request request,
+    SyncSettings syncSettings,
+  ) async {
+    try {
+      return await _client.send(request);
+    } catch (error) {
+      final base = syncSettings.apiBaseUrl.trim().replaceAll(RegExp(r'/$'), '');
+      if (base.isEmpty) rethrow;
+      final proxy = http.Request(request.method, Uri.parse('$base/api/proxy'))
+        ..headers.addAll(request.headers)
+        ..headers['x-target-url'] = request.url.toString()
+        ..bodyBytes = request.bodyBytes;
+      return _client.send(proxy);
+    }
+  }
+
+  Future<http.Response> _getWithProxyFallback(
+    Uri uri,
+    Map<String, String> headers,
+    SyncSettings syncSettings,
+  ) async {
+    try {
+      return await _client
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 12));
+    } catch (_) {
+      final base = _proxyBase(syncSettings);
+      if (base.isEmpty) rethrow;
+      return _client
+          .get(
+            Uri.parse('$base/api/proxy'),
+            headers: {...headers, 'x-target-url': uri.toString()},
+          )
+          .timeout(const Duration(seconds: 20));
+    }
+  }
+
+  String _proxyBase(SyncSettings syncSettings) {
+    final configured = syncSettings.apiBaseUrl.trim();
+    if (configured.isNotEmpty) {
+      return configured.replaceAll(RegExp(r'/$'), '');
+    }
+    return kIsWeb ? 'http://127.0.0.1:3000' : '';
+  }
+
+  List<String> _extractModelIds(dynamic data) {
+    final rawItems = switch (data) {
+      List() => data,
+      Map() when data['data'] is List => data['data'] as List,
+      Map() when data['models'] is List => data['models'] as List,
+      Map() when data['items'] is List => data['items'] as List,
+      _ => const [],
+    };
+    return rawItems
+        .map((item) {
+          if (item is String) return item;
+          if (item is Map) {
+            return stringValue(
+              item['id'],
+              stringValue(item['name'], stringValue(item['model'])),
+            );
+          }
+          return '';
+        })
+        .map((name) => name.replaceFirst(RegExp(r'^models/'), '').trim())
+        .where((name) => name.isNotEmpty)
+        .toList();
+  }
+
+  Future<bool> _shouldSearch(
+    String prompt,
+    String model,
+    EndpointConfig? endpoint,
+    GenerationSettings settings,
+    String geminiApiKey,
+  ) async {
+    if (settings.webSearchMode == 'off') return false;
+    if (settings.webSearchMode == 'on') return true;
+    final text = prompt.toLowerCase();
+    const triggers = [
+      'latest',
+      'recent',
+      'today',
+      'current',
+      'news',
+      'price',
+      'stock',
+      'score',
+      'schedule',
+      'weather',
+      'happening',
+      '2026',
+    ];
+    return triggers.any(text.contains);
+  }
+
+  Future<String> _performSearch(
+    String query,
+    GenerationSettings settings,
+    List<EndpointConfig> endpoints,
+    List<EndpointModel> endpointModels,
+    String geminiApiKey,
+    SyncSettings syncSettings,
+    StatusCallback onStatus,
+  ) async {
+    final engine = settings.webSearchEngine;
+    onStatus('Searching the web...');
+    if (engine == 'duckduckgo') {
+      final uri = Uri.https('api.duckduckgo.com', '/', {
+        'q': query,
+        'format': 'json',
+        'no_html': '1',
+        'skip_disambig': '1',
+      });
+      final data = await _getJson(uri);
+      final topics = data['RelatedTopics'] is List
+          ? data['RelatedTopics'] as List
+          : const [];
+      final results = <Map<String, String>>[];
+      if (stringValue(data['AbstractText']).isNotEmpty) {
+        results.add({
+          'title': stringValue(data['Heading'], 'DuckDuckGo abstract'),
+          'url': stringValue(data['AbstractURL']),
+          'snippet': stringValue(data['AbstractText']),
+        });
+      }
+      for (final topic in topics) {
+        if (topic is Map && topic['Topics'] is List) {
+          for (final nested in (topic['Topics'] as List).whereType<Map>()) {
+            results.add({
+              'title': stringValue(nested['Text']).split(' - ').first,
+              'url': stringValue(nested['FirstURL']),
+              'snippet': stringValue(nested['Text']),
+            });
+          }
+        } else if (topic is Map) {
+          results.add({
+            'title': stringValue(topic['Text']).split(' - ').first,
+            'url': stringValue(topic['FirstURL']),
+            'snippet': stringValue(topic['Text']),
+          });
+        }
+      }
+      if (results.isEmpty) {
+        throw Exception('DuckDuckGo returned no web results.');
+      }
+      onStatus('Found ${results.length} DuckDuckGo results.');
+      return _searchBlock(results.take(8).toList());
+    }
+
+    if (engine == 'google-custom') {
+      if (settings.googleSearchApiKey.trim().isEmpty ||
+          settings.googleSearchCx.trim().isEmpty) {
+        throw Exception(
+          'Google Custom Search API key and search engine ID are required.',
+        );
+      }
+      final uri = Uri.https('www.googleapis.com', '/customsearch/v1', {
+        'key': settings.googleSearchApiKey.trim(),
+        'cx': settings.googleSearchCx.trim(),
+        'q': query,
+        'num': '8',
+      });
+      final data = await _getJson(uri);
+      final items = data['items'] is List ? data['items'] as List : const [];
+      final results = items
+          .whereType<Map>()
+          .map(
+            (item) => {
+              'title': stringValue(item['title'], 'Untitled'),
+              'url': stringValue(item['link']),
+              'snippet': stringValue(item['snippet']),
+            },
+          )
+          .toList();
+      if (results.isEmpty) {
+        throw Exception('Google Custom Search returned no results.');
+      }
+      onStatus('Found ${results.length} Google results.');
+      return _searchBlock(results);
+    }
+
+    if (engine == 'tavily') {
+      if (settings.tavilyApiKey.trim().isEmpty) {
+        throw Exception('Tavily API key is not configured.');
+      }
+      final response = await _client.post(
+        Uri.https('api.tavily.com', '/search'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'api_key': settings.tavilyApiKey.trim(),
+          'query': query,
+          'search_depth': 'advanced',
+          'include_answer': true,
+          'max_results': 8,
+        }),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception(
+          _extractApiError(response.body, 'Tavily search failed.'),
+        );
+      }
+      final data = jsonDecode(response.body);
+      final items = data['results'] is List
+          ? data['results'] as List
+          : const [];
+      final results = items
+          .whereType<Map>()
+          .map(
+            (item) => {
+              'title': stringValue(item['title'], 'Untitled'),
+              'url': stringValue(item['url']),
+              'snippet': stringValue(item['content']),
+            },
+          )
+          .toList();
+      if (results.isEmpty) throw Exception('Tavily returned no results.');
+      final answer = stringValue(data['answer']);
+      onStatus('Found ${results.length} Tavily results.');
+      return '\n\n[Web Search Results]\n${answer.isEmpty ? '' : 'Tavily AI Summary: $answer\n\n'}${_formatResults(results)}\n[End of Search Results]\n\nUsing the search results above as context, answer the user question. Cite source links when available:\n';
+    }
+
+    if (engine == 'endpoint') {
+      final endpoint = endpoints
+          .where((item) => item.id == settings.webSearchEndpointId)
+          .cast<EndpointConfig?>()
+          .firstOrNull;
+      if (endpoint == null ||
+          endpoint.url.isEmpty ||
+          endpoint.key.isEmpty ||
+          settings.webSearchModel.isEmpty) {
+        throw Exception('Web search endpoint or model is not configured.');
+      }
+      final request =
+          http.Request(
+              'POST',
+              Uri.parse('${_endpointBase(endpoint.url)}/chat/completions'),
+            )
+            ..headers.addAll({
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${endpoint.key}',
+            })
+            ..body = jsonEncode({
+              'model': settings.webSearchModel,
+              'messages': [
+                {
+                  'role': 'system',
+                  'content':
+                      'Use live web search if available. Return a concise research summary with source links.',
+                },
+                {'role': 'user', 'content': query},
+              ],
+              'temperature': 0.2,
+            });
+      final response = await _sendWithProxyFallback(request, syncSettings);
+      final body = await response.stream.bytesToString();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception(_extractApiError(body, 'Endpoint web search failed.'));
+      }
+      final data = jsonDecode(body);
+      final text = stringValue(
+        data['choices']?[0]?['message']?['content'],
+      ).trim();
+      if (text.isEmpty) {
+        throw Exception('Endpoint web search returned no text.');
+      }
+      onStatus('Endpoint search complete.');
+      return '\n\n[Web Search Results]\n$text\n[End of Search Results]\n\nUsing the search results above as context, answer the user question. Cite source links when available:\n';
+    }
+
+    if (geminiApiKey.trim().isEmpty) {
+      throw Exception(
+        'Gemini API key is required for Gemini Grounding search.',
+      );
+    }
+    final uri = Uri.https(
+      'generativelanguage.googleapis.com',
+      '/v1beta/models/${settings.webSearchModel.isEmpty ? 'gemini-flash-lite-latest' : settings.webSearchModel}:generateContent',
+      {'key': geminiApiKey.trim()},
+    );
+    final response = await _client.post(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'contents': [
+          {
+            'role': 'user',
+            'parts': [
+              {'text': query},
+            ],
+          },
+        ],
+        'tools': [
+          {'googleSearch': {}},
+        ],
+      }),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        _extractApiError(response.body, 'Gemini web search failed.'),
+      );
+    }
+    final data = jsonDecode(response.body);
+    final text = _geminiText(data);
+    if (text.isEmpty) throw Exception('Gemini web search returned no text.');
+    onStatus('Gemini search complete.');
+    return '\n\n[Web Search Results]\n$text\n[End of Search Results]\n\nUsing the search results above as context, answer the user question. Cite source links when available:\n';
+  }
+
+  Future<Map<String, dynamic>> _getJson(Uri uri) async {
+    final response = await _client
+        .get(uri)
+        .timeout(const Duration(seconds: 12));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Request failed with status ${response.statusCode}.');
+    }
+    return Map<String, dynamic>.from(jsonDecode(response.body));
+  }
+
+  String _searchBlock(List<Map<String, String>> results) {
+    return '\n\n[Web Search Results]\n${_formatResults(results)}\n[End of Search Results]\n\nUsing the search results above as context, answer the user question. Cite source links when available:\n';
+  }
+
+  String _formatResults(List<Map<String, String>> results) {
+    return results
+        .asMap()
+        .entries
+        .map((entry) {
+          final value = entry.value;
+          return '[${entry.key + 1}] ${value['title']}\n${value['url']}\n${value['snippet']}';
+        })
+        .join('\n\n');
+  }
+
+  String _systemText(VoiceSettings settings) {
+    if (settings.textPersonality == 'Custom') {
+      return settings.customTextPersonality.isEmpty
+          ? _textPrompts['Assistant']!
+          : settings.customTextPersonality;
+    }
+    if (settings.textPersonality.startsWith('custom-text:')) {
+      final id = settings.textPersonality.replaceFirst('custom-text:', '');
+      return settings.customTextPersonalities
+              .where((item) => item.id == id)
+              .firstOrNull
+              ?.prompt ??
+          _textPrompts['Assistant']!;
+    }
+    return _textPrompts[settings.textPersonality] ?? _textPrompts['Assistant']!;
+  }
+
+  EndpointModel? _resolveEndpointModel(
+    String modelName,
+    List<EndpointConfig> endpoints,
+    List<EndpointModel> endpointModels,
+  ) {
+    final direct = endpointModels
+        .where((item) => item.name == modelName)
+        .cast<EndpointModel?>()
+        .firstOrNull;
+    if (direct != null) return direct;
+    final nonGeminiHint =
+        modelName.contains('/') ||
+        [
+          'llama',
+          'qwen',
+          'mistral',
+          'gpt',
+          'deepseek',
+          'claude',
+        ].any(modelName.toLowerCase().contains);
+    if (nonGeminiHint &&
+        endpoints.isNotEmpty &&
+        !modelName.toLowerCase().startsWith('gemini')) {
+      return EndpointModel(name: modelName, endpointId: endpoints.first.id);
+    }
+    return null;
+  }
+
+  List<Map<String, dynamic>> _openAiHistory(
+    List<Message> messages,
+    int tokenBudget,
+  ) {
+    final result = <Map<String, dynamic>>[];
+    var used = 0;
+    for (final message in messages.reversed) {
+      final tokens = countTokens(message.text) + 8;
+      if (result.isNotEmpty && used + tokens > tokenBudget) break;
+      used += tokens;
+      result.insert(0, {
+        'role': message.isUser ? 'user' : 'assistant',
+        'content': _messageText(message),
+      });
+    }
+    return result;
+  }
+
+  List<Map<String, dynamic>> _geminiHistory(
+    List<Message> messages,
+    int tokenBudget,
+  ) {
+    final result = <Map<String, dynamic>>[];
+    var used = 0;
+    for (final message in messages.reversed) {
+      final tokens = countTokens(message.text) + 8;
+      if (result.isNotEmpty && used + tokens > tokenBudget) break;
+      used += tokens;
+      result.insert(0, {
+        'role': message.isUser ? 'user' : 'model',
+        'parts': [
+          {'text': _messageText(message)},
+        ],
+      });
+    }
+    if (result.isNotEmpty && result.first['role'] == 'model') {
+      result.insert(0, {
+        'role': 'user',
+        'parts': [
+          {'text': 'Continue from the previous conversation.'},
+        ],
+      });
+    }
+    return result;
+  }
+
+  String _messageText(Message message) {
+    final attachmentNotes = message.attachments
+        .map((item) => '[Attachment: ${item.name} (${item.type})]')
+        .join('\n');
+    return [
+      parseText(message.text).mainContent.trim(),
+      attachmentNotes,
+    ].where((item) => item.isNotEmpty).join('\n');
+  }
+
+  String _geminiText(dynamic data) {
+    final parts = data['candidates']?[0]?['content']?['parts'];
+    if (parts is! List) return '';
+    return parts
+        .whereType<Map>()
+        .map((part) => stringValue(part['text']))
+        .where((text) => text.isNotEmpty)
+        .join();
+  }
+
+  String _extractApiError(String body, String fallback) {
+    final trimmed = body.trim();
+    if (trimmed.startsWith('<!DOCTYPE') ||
+        trimmed.startsWith('<html') ||
+        trimmed.contains('<html')) {
+      return '$fallback Endpoint returned HTML instead of JSON. Check the Base URL; OpenRouter should be https://openrouter.ai/api/v1.';
+    }
+    try {
+      final data = jsonDecode(body);
+      return stringValue(
+        data['error'] is Map ? data['error']['message'] : data['error'],
+        fallback,
+      );
+    } catch (_) {
+      if (trimmed.isEmpty) return fallback;
+      return trimmed.length > 360 ? '${trimmed.substring(0, 360)}...' : trimmed;
+    }
+  }
+
+  String _cleanError(Object error) =>
+      error.toString().replaceFirst('Exception: ', '');
+
+  String _trimSlash(String value) => value.trim().replaceAll(RegExp(r'/$'), '');
+
+  String _endpointBase(String value) {
+    final base = _trimSlash(value);
+    final uri = Uri.tryParse(base);
+    if (uri == null || !uri.hasScheme) return base;
+    if (uri.host.toLowerCase().contains('openrouter.ai') &&
+        !uri.path.toLowerCase().contains('/api/v1')) {
+      return '${uri.scheme}://${uri.host}/api/v1';
+    }
+    return base;
+  }
+
+  static const _artifactInstruction =
+      '\n\nARTIFACT MODE ENABLED: Create complete multi-file web projects. Start every code block with a file header comment such as // file: path/name.ext or <!-- file: path/name.html -->. Provide full file contents.';
+}
+
+class ParsedText {
+  const ParsedText({
+    this.thinkContent,
+    required this.mainContent,
+    required this.isThinkingStill,
+  });
+
+  final String? thinkContent;
+  final String mainContent;
+  final bool isThinkingStill;
+}
+
+ParsedText parseText(String text) {
+  final regex = RegExp(r'<think>([\s\S]*?)(</think>|$)', caseSensitive: false);
+  final match = regex.firstMatch(text);
+  if (match == null) {
+    return ParsedText(mainContent: text, isThinkingStill: false);
+  }
+  final hasClosed = text.toLowerCase().contains('</think>');
+  var main = '';
+  if (hasClosed) {
+    final before = text.split(RegExp(r'<think>', caseSensitive: false)).first;
+    final after = text.split(RegExp(r'</think>', caseSensitive: false)).last;
+    main = '$before $after'.trim();
+  } else {
+    main = text.split(RegExp(r'<think>', caseSensitive: false)).first.trim();
+  }
+  return ParsedText(
+    thinkContent: match.group(1),
+    mainContent: main,
+    isThinkingStill: !hasClosed,
+  );
+}
+
+int countTokens(String text) => max(1, (text.length / 4).ceil());
+
+String formatTokenCount(int tokens) {
+  if (tokens >= 1000000) return '${(tokens / 1000000).toStringAsFixed(1)}M';
+  if (tokens >= 1000) return '${(tokens / 1000).round()}K';
+  return tokens.toString();
+}
+
+int contextWindow(String model) {
+  final normalized = model.toLowerCase().trim();
+  if (normalized.contains('gemini-1.5-pro')) return 2000000;
+  if (normalized.contains('gemini')) return 1000000;
+  if (normalized.contains('claude')) return 200000;
+  if (normalized.contains('o1')) return 200000;
+  if (normalized.contains('gpt-4o') ||
+      normalized.contains('gpt-4-turbo') ||
+      normalized.contains('gpt')) {
+    return 128000;
+  }
+  if (normalized.contains('llama-3.1') ||
+      normalized.contains('llama-3.3') ||
+      normalized.contains('qwen')) {
+    return 131072;
+  }
+  if (normalized.contains('mistral') || normalized.contains('deepseek')) {
+    return 128000;
+  }
+  return 128000;
+}
+
+String cleanTitle(String raw) {
+  final cleaned = raw
+      .trim()
+      .replaceAll(RegExp(r'''^["']|["']$'''), '')
+      .replaceAll(RegExp(r'^title:\s*', caseSensitive: false), '')
+      .replaceAll(RegExp(r'[.!?,;:]+$'), '')
+      .split(RegExp(r'\s+'))
+      .take(6)
+      .join(' ');
+  return cleaned.length > 50 ? cleaned.substring(0, 50).trim() : cleaned;
+}
+
+class LinkedHashSetString {
+  LinkedHashSetString(Iterable<String> values) {
+    for (final value in values) {
+      if (value.trim().isNotEmpty && !_seen.contains(value)) {
+        _seen.add(value);
+        _values.add(value);
+      }
+    }
+  }
+
+  final _seen = <String>{};
+  final _values = <String>[];
+
+  List<String> toList() => _values;
+}
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
+}
