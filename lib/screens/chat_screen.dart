@@ -221,7 +221,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   Future<void> _pickFiles(FileType type) async {
     Navigator.pop(context);
-    final result = await FilePicker.pickFiles(
+    final result = await FilePicker.platform.pickFiles(
       type: type,
       allowMultiple: true,
       withData: true,

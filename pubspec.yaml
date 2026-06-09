@@ -36,7 +36,10 @@ dependencies:
   http: ^1.6.0
   web: ^1.1.1
   web_socket_channel: ^3.0.3
-  file_picker: any
+  # Keep Android on the Java-backed plugin implementation. Newer file_picker
+  # releases can generate a registrant entry for a Kotlin class that is not
+  # visible during CI's Java compile step.
+  file_picker: 8.3.7
   image_picker: ^1.2.2
   flutter_markdown: ^0.7.7+1
   url_launcher: ^6.3.2
