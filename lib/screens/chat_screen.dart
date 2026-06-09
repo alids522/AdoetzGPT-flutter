@@ -78,19 +78,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   onEditSave: _saveEdit,
                 ),
         ),
-        if (app.isLiveActive || app.isLiveConnecting)
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Center(
-                child: _LiveVoiceOrb(
-                  inputLevel: app.liveInputLevel,
-                  outputLevel: app.liveOutputLevel,
-                  recording: app.isLiveRecording,
-                  connecting: app.isLiveConnecting,
-                ),
-              ),
-            ),
-          ),
+
         Positioned(
           left: 0,
           right: 0,
@@ -138,6 +126,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                 connecting: app.isLiveConnecting,
                                 status: app.liveStatus,
                                 level: app.liveInputLevel,
+                                outputLevel: app.liveOutputLevel,
                                 onRecording: () =>
                                     unawaited(app.toggleLiveRecording()),
                                 onClose: () =>
@@ -1190,7 +1179,7 @@ class _InputPod extends StatelessWidget {
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 9),
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 5),
             child: Row(
               children: [
                 RoundIconButton(
@@ -1263,7 +1252,7 @@ class _InputPod extends StatelessWidget {
           ),
           Divider(height: 1, color: p.outline),
           Padding(
-            padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -1432,6 +1421,7 @@ class _VoiceOverlay extends StatelessWidget {
     required this.connecting,
     required this.status,
     required this.level,
+    required this.outputLevel,
     required this.onRecording,
     required this.onClose,
   });
@@ -1440,6 +1430,7 @@ class _VoiceOverlay extends StatelessWidget {
   final bool connecting;
   final String status;
   final double level;
+  final double outputLevel;
   final VoidCallback onRecording;
   final VoidCallback onClose;
 
@@ -1466,8 +1457,18 @@ class _VoiceOverlay extends StatelessWidget {
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 430;
           final buttonSize = compact ? 42.0 : 48.0;
-          final capsuleWidth = compact ? 112.0 : 148.0;
-          final glow = (0.18 + level * 0.56).clamp(0.18, 0.74);
+          final activeLevel = math.max(level, outputLevel).clamp(0.0, 1.0);
+          final isOutput = outputLevel > level;
+          final capsuleBaseWidth = compact ? 112.0 : 148.0;
+          final capsuleWidth = capsuleBaseWidth + activeLevel * 60;
+          final glowAlpha = (0.18 + activeLevel * 0.56).clamp(0.18, 0.74);
+          final blurAmount = 16.0 + activeLevel * 24;
+          final capsuleColor = isOutput
+              ? const Color(0xff8b5cf6)
+              : const Color(0xff2563eb);
+          final capsuleColorEnd = isOutput
+              ? const Color(0xffc084fc)
+              : const Color(0xff60a5fa);
           return Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -1494,7 +1495,9 @@ class _VoiceOverlay extends StatelessWidget {
                 const SizedBox(width: 8),
               ],
               SizedBox(width: compact ? 8 : 16),
-              Container(
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                curve: Curves.easeOut,
                 width: capsuleWidth,
                 height: 42,
                 decoration: BoxDecoration(
@@ -1504,38 +1507,64 @@ class _VoiceOverlay extends StatelessWidget {
                     end: Alignment.bottomCenter,
                     colors: [
                       Colors.black,
-                      const Color(
-                        0xff1d4ed8,
-                      ).withValues(alpha: recording ? 0.96 : 0.72),
-                      const Color(
-                        0xff60a5fa,
-                      ).withValues(alpha: recording ? 0.94 : 0.70),
+                      capsuleColor.withValues(
+                        alpha: recording ? 0.96 : 0.72,
+                      ),
+                      capsuleColorEnd.withValues(
+                        alpha: recording ? 0.94 : 0.70,
+                      ),
                     ],
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: p.primary.withValues(
-                        alpha: recording ? glow : 0.18,
-                      ),
-                      blurRadius: recording ? 30 : 16,
-                      offset: const Offset(0, 8),
+                      color: capsuleColor.withValues(alpha: glowAlpha),
+                      blurRadius: blurAmount,
+                      spreadRadius: activeLevel * 4,
+                      offset: const Offset(0, 4),
                     ),
                   ],
                 ),
                 child: Center(
-                  child: Text(
-                    connecting
-                        ? 'Connecting'
-                        : (status.trim().isEmpty
-                              ? (recording ? 'Listening' : 'Paused')
-                              : status.trim()),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w900,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 100),
+                        width: 6 + activeLevel * 10,
+                        height: 6 + activeLevel * 10,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white.withValues(
+                            alpha: 0.5 + activeLevel * 0.5,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.white.withValues(
+                                alpha: activeLevel * 0.5,
+                              ),
+                              blurRadius: 8 + activeLevel * 8,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        connecting
+                            ? 'Connecting...'
+                            : (status.trim().isEmpty
+                                  ? (recording
+                                      ? (isOutput ? 'Speaking...' : 'Listening...')
+                                      : 'Paused')
+                                  : status.trim()),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -1595,19 +1624,7 @@ class _LiveVideoStage extends StatelessWidget {
           ),
         ),
         Positioned(top: 14, right: 16, child: _LiveVideoTopControls(app: app)),
-        Positioned.fill(
-          child: IgnorePointer(
-            child: Align(
-              alignment: const Alignment(0, 0.26),
-              child: _LiveVoiceOrb(
-                inputLevel: app.liveInputLevel,
-                outputLevel: app.liveOutputLevel,
-                recording: app.isLiveRecording,
-                connecting: app.isLiveConnecting,
-              ),
-            ),
-          ),
-        ),
+
         Positioned(
           left: 0,
           right: 0,
