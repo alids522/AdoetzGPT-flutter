@@ -130,7 +130,6 @@ class AdoetzAppState extends ChangeNotifier {
       currentSessionId = activeSessions.first.id;
     }
 
-    createTemporarySession();
     initialized = true;
     notifyListeners();
     unawaited(fetchModels());
@@ -144,19 +143,11 @@ class AdoetzAppState extends ChangeNotifier {
         authToken.isNotEmpty &&
         syncSettings.enabled) {
       try {
-        final temporarySession = currentSession.temporary
-            ? currentSession
-            : null;
         final remote = await _sync
             .pullRemoteState(authToken, syncSettings)
             .timeout(const Duration(seconds: 8));
         if (remote != null) {
           _applyState(_mergeRemote(buildState(), remote), notify: false);
-          if (temporarySession != null &&
-              !sessions.any((session) => session.id == temporarySession.id)) {
-            sessions = [temporarySession, ...sessions];
-            currentSessionId = temporarySession.id;
-          }
           lastSyncAt = DateTime.now().millisecondsSinceEpoch;
           syncStatus = 'Database sync loaded.';
           notifyListeners();
@@ -170,9 +161,7 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   PersistedAppState buildState() {
-    final persistedSessions = sessions
-        .where((session) => !session.temporary)
-        .toList();
+    final persistedSessions = sessions.toList();
     final persistedCurrentId =
         persistedSessions.any((session) => session.id == currentSessionId)
         ? currentSessionId
@@ -511,7 +500,7 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void createSession() {
-    if (currentSession.messages.isEmpty && !currentSession.temporary) {
+    if (currentSession.messages.isEmpty) {
       currentView = AppView.chat;
       notifyListeners();
       return;
@@ -524,28 +513,10 @@ class AdoetzAppState extends ChangeNotifier {
     unawaited(_persistAndScheduleRemote());
   }
 
-  void createTemporarySession() {
-    if (currentSession.temporary) {
-      currentView = AppView.chat;
-      notifyListeners();
-      return;
-    }
-    final session = Session.empty(
-      'temporary-${DateTime.now().microsecondsSinceEpoch}',
-    ).copyWith(title: 'Temporary Chat', temporary: true);
-    sessions = [session, ...sessions];
-    currentSessionId = session.id;
-    currentView = AppView.chat;
-    notifyListeners();
-  }
+
 
   void headerChatShortcut() {
-    final session = currentSession;
-    if (session.messages.isEmpty && !session.temporary) {
-      createTemporarySession();
-    } else {
-      createSession();
-    }
+    createSession();
   }
 
   void selectSession(String id) {
@@ -657,6 +628,15 @@ class AdoetzAppState extends ChangeNotifier {
     if (isGenerating || (prompt.trim().isEmpty && attachments.isEmpty)) return;
     unawaited(_playSound('send_user_message.wav'));
     unawaited(_playSound('loading_ai_response.wav'));
+
+    Timer? loadingAudioTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (!isGenerating) {
+        timer.cancel();
+      } else {
+        unawaited(_playSound('loading_ai_response.wav'));
+      }
+    });
+
     final session = currentSession;
     final now = DateTime.now();
     final userMessage = Message(
@@ -691,7 +671,7 @@ class AdoetzAppState extends ChangeNotifier {
     _replaceSession(session.id, nextSession);
     isGenerating = true;
     syncStatus = '';
-    if (!session.temporary) _maybeSaveUserMemory(prompt);
+    _maybeSaveUserMemory(prompt);
     notifyListeners();
     if (isFirstMessage) {
       unawaited(
@@ -750,6 +730,10 @@ class AdoetzAppState extends ChangeNotifier {
           _updateBotMessage(session.id, botId, status);
         },
         onText: (text) {
+          if (loadingAudioTimer != null) {
+            loadingAudioTimer?.cancel();
+            loadingAudioTimer = null;
+          }
           fullBotText = text;
           startTypingTimer();
         },
@@ -780,6 +764,8 @@ class AdoetzAppState extends ChangeNotifier {
         'Error: ${error.toString().replaceFirst('Exception: ', '')}',
       );
     } finally {
+      loadingAudioTimer?.cancel();
+      loadingAudioTimer = null;
       typingTimer?.cancel();
       typingTimer = null;
       isGenerating = false;
@@ -1218,7 +1204,7 @@ class AdoetzAppState extends ChangeNotifier {
           'live-$sender-${now.microsecondsSinceEpoch}-${messages.length}';
       if (isUser) {
         _liveUserMessageId = id;
-        if (!session.temporary) _maybeSaveUserMemory(clean);
+        _maybeSaveUserMemory(clean);
       } else {
         _liveBotMessageId = id;
       }
@@ -1239,7 +1225,7 @@ class AdoetzAppState extends ChangeNotifier {
         text: merged,
         tokenCount: finished ? countTokens(merged) : null,
       );
-      if (isUser && finished && !session.temporary) {
+      if (isUser && finished) {
         _maybeSaveUserMemory(merged);
       }
     }
@@ -1380,9 +1366,9 @@ class AdoetzAppState extends ChangeNotifier {
     }
     final now = DateTime.now();
     final last = _lastHapticAt;
-    if (last != null && now.difference(last).inMilliseconds < 140) return;
+    if (last != null && now.difference(last).inMilliseconds < 40) return;
     _lastHapticAt = now;
-    unawaited(HapticFeedback.selectionClick());
+    unawaited(HapticFeedback.lightImpact());
   }
 
   void _pulseLiveOutput() {

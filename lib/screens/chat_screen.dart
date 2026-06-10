@@ -1488,10 +1488,7 @@ class _InputPod extends StatelessWidget {
                   onPressed: app.toggleArtifactMode,
                 ),
                 const SizedBox(width: 12),
-                if (app.currentSession.temporary && !compact) ...[
-                  _TemporaryComposerPill(palette: p),
-                  const SizedBox(width: 10),
-                ],
+
                 SizedBox(
                   width: compact ? 74 : 132,
                   child: ClipRRect(
@@ -1553,6 +1550,7 @@ class _InputPod extends StatelessWidget {
                         height: 1.32,
                       ),
                       decoration: InputDecoration(
+                        filled: false,
                         hintText: copy.t('chat', 'placeholder'),
                         hintStyle: TextStyle(
                           color: p.onSurfaceVariant.withValues(alpha: 0.55),
@@ -1671,41 +1669,6 @@ class _InputPod extends StatelessWidget {
   }
 }
 
-class _TemporaryComposerPill extends StatelessWidget {
-  const _TemporaryComposerPill({required this.palette});
-
-  final AppPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 26,
-      padding: const EdgeInsets.symmetric(horizontal: 9),
-      decoration: BoxDecoration(
-        color: const Color(0xffa78bfa).withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: const Color(0xffa78bfa).withValues(alpha: 0.30),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(LucideIcons.shieldOff, size: 13, color: Color(0xffa78bfa)),
-          const SizedBox(width: 5),
-          Text(
-            'Temporary',
-            style: TextStyle(
-              color: palette.onSurface.withValues(alpha: 0.78),
-              fontSize: 10,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _VoiceOverlay extends StatelessWidget {
   const _VoiceOverlay({

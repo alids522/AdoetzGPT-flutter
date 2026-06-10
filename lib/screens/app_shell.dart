@@ -227,10 +227,6 @@ class _HeaderState extends State<_Header> {
           ],
           if (app.currentView == AppView.chat) ...[
             const Spacer(),
-            if (app.currentSession.temporary) ...[
-              _TemporaryHeaderPill(palette: p),
-              const SizedBox(width: 8),
-            ],
           ],
           if (app.syncSettings.enabled && app.syncStatus.isNotEmpty) ...[
             Tooltip(
@@ -244,15 +240,9 @@ class _HeaderState extends State<_Header> {
             const SizedBox(width: 8),
           ],
           RoundIconButton(
-            icon: app.currentSession.messages.isEmpty
-                ? LucideIcons.sparkles
-                : LucideIcons.edit2,
-            color: app.currentSession.messages.isEmpty
-                ? const Color(0xffa78bfa)
-                : p.onSurface,
-            tooltip: app.currentSession.messages.isEmpty
-                ? 'Temporary chat'
-                : 'New chat',
+            icon: LucideIcons.edit2,
+            color: p.onSurface,
+            tooltip: 'New chat',
             onPressed: app.headerChatShortcut,
           ),
         ],
@@ -339,42 +329,6 @@ class _HeaderState extends State<_Header> {
   }
 }
 
-class _TemporaryHeaderPill extends StatelessWidget {
-  const _TemporaryHeaderPill({required this.palette});
-
-  final AppPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 30,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xffa78bfa).withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: const Color(0xffa78bfa).withValues(alpha: 0.34),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(LucideIcons.shieldOff, size: 14, color: Color(0xffa78bfa)),
-          const SizedBox(width: 6),
-          Text(
-            'TEMP',
-            style: TextStyle(
-              color: palette.onSurface.withValues(alpha: 0.82),
-              fontSize: 11,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.8,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _ModelDropdown extends StatefulWidget {
   const _ModelDropdown({
@@ -638,9 +592,7 @@ class _AppDrawerState extends State<_AppDrawer> {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AdoetzAppState>();
-    final activeSessions = app.activeSessions
-        .where((session) => !session.temporary)
-        .toList();
+    final activeSessions = app.activeSessions.toList();
     final searchQuery = searchController.text.trim();
     final visibleSessions = searchQuery.isEmpty
         ? activeSessions

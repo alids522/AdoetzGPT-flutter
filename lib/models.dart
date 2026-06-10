@@ -148,7 +148,6 @@ class Session {
     required this.updatedAt,
     this.pinned = false,
     this.deleted = false,
-    this.temporary = false,
   });
 
   final String id;
@@ -157,7 +156,6 @@ class Session {
   final int updatedAt;
   final bool pinned;
   final bool deleted;
-  final bool temporary;
 
   Session copyWith({
     String? title,
@@ -165,7 +163,6 @@ class Session {
     int? updatedAt,
     bool? pinned,
     bool? deleted,
-    bool? temporary,
   }) {
     return Session(
       id: id,
@@ -174,7 +171,6 @@ class Session {
       updatedAt: updatedAt ?? this.updatedAt,
       pinned: pinned ?? this.pinned,
       deleted: deleted ?? this.deleted,
-      temporary: temporary ?? this.temporary,
     );
   }
 
@@ -199,7 +195,6 @@ class Session {
       ),
       pinned: boolValue(json['pinned']),
       deleted: boolValue(json['deleted']),
-      temporary: boolValue(json['temporary']),
     );
   }
 
@@ -210,7 +205,6 @@ class Session {
     'updatedAt': updatedAt,
     if (pinned) 'pinned': pinned,
     if (deleted) 'deleted': deleted,
-    if (temporary) 'temporary': temporary,
   };
 }
 
@@ -930,7 +924,6 @@ class PersistedAppState {
     'genSettings': genSettings.toJson(),
     'voiceSettings': voiceSettings.toJson(),
     'sessions': sessions
-        .where((item) => !item.temporary)
         .map((item) => item.toJson())
         .toList(),
     'currentSessionId': currentSessionId,
