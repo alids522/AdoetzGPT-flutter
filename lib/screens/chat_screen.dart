@@ -1599,7 +1599,7 @@ class _InputPod extends StatelessWidget {
             ),
           ),
         ],
-      ],
+      ),
     );
 
     if (p.isClassic) {
