@@ -69,6 +69,9 @@ class StorageService {
           ? state.tokenUsageData.sublist(state.tokenUsageData.length - 500)
           : state.tokenUsageData,
       customCounters: state.customCounters,
+      soundEffectsEnabled: state.soundEffectsEnabled,
+      isLiveVideoEnabled: state.isLiveVideoEnabled,
+      isLiveFrontCamera: state.isLiveFrontCamera,
       savedAt: DateTime.now().millisecondsSinceEpoch,
     );
   }

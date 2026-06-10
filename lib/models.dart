@@ -788,6 +788,9 @@ class PersistedAppState {
     required this.memories,
     required this.tokenUsageData,
     required this.customCounters,
+    required this.soundEffectsEnabled,
+    required this.isLiveVideoEnabled,
+    required this.isLiveFrontCamera,
     this.savedAt,
   });
 
@@ -809,6 +812,9 @@ class PersistedAppState {
   final List<Memory> memories;
   final List<TokenUsageRecord> tokenUsageData;
   final List<CustomCounter> customCounters;
+  final bool soundEffectsEnabled;
+  final bool isLiveVideoEnabled;
+  final bool isLiveFrontCamera;
   final int? savedAt;
 
   factory PersistedAppState.defaults() {
@@ -839,6 +845,9 @@ class PersistedAppState {
       memories: const [],
       tokenUsageData: const [],
       customCounters: const [],
+      soundEffectsEnabled: true,
+      isLiveVideoEnabled: false,
+      isLiveFrontCamera: false,
     );
   }
 
@@ -889,6 +898,9 @@ class PersistedAppState {
       customCounters: mapList(
         json['customCounters'],
       ).map(CustomCounter.fromJson).toList(),
+      soundEffectsEnabled: boolValue(json['soundEffectsEnabled'], true),
+      isLiveVideoEnabled: boolValue(json['isLiveVideoEnabled']),
+      isLiveFrontCamera: boolValue(json['isLiveFrontCamera']),
       savedAt: json['savedAt'] == null ? null : intValue(json['savedAt']),
     );
   }
@@ -920,6 +932,9 @@ class PersistedAppState {
     'memories': memories.map((item) => item.toJson()).toList(),
     'tokenUsageData': tokenUsageData.map((item) => item.toJson()).toList(),
     'customCounters': customCounters.map((item) => item.toJson()).toList(),
+    'soundEffectsEnabled': soundEffectsEnabled,
+    'isLiveVideoEnabled': isLiveVideoEnabled,
+    'isLiveFrontCamera': isLiveFrontCamera,
     'savedAt': savedAt ?? DateTime.now().millisecondsSinceEpoch,
   };
 

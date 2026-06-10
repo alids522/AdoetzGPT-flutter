@@ -25,6 +25,7 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
+  DateTime? _lastBackPressTime;
 
   @override
   Widget build(BuildContext context) {
@@ -43,6 +44,20 @@ class _AppShellState extends State<AppShell> {
           return;
         }
         if (context.read<AdoetzAppState>().handleSystemBack()) return;
+        
+        final now = DateTime.now();
+        if (_lastBackPressTime == null || now.difference(_lastBackPressTime!) > const Duration(seconds: 2)) {
+          _lastBackPressTime = now;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Press back again to exit app'),
+              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: p.isDark ? const Color(0xff333333) : const Color(0xff555555),
+            ),
+          );
+          return;
+        }
         SystemNavigator.pop();
       },
       child: Scaffold(

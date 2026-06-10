@@ -1,4 +1,4 @@
-package com.adoetz.adoetzgpt
+package com.adoetz.adoetzgpt2
 
 import android.content.Intent
 import android.os.Build

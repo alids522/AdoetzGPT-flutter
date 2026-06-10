@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -24,8 +26,11 @@ class AdoetzAppState extends ChangeNotifier {
   final AiService _ai;
   GeminiLiveService? _liveService;
   Timer? _remoteSyncTimer;
+  Timer? _liveInputReleaseTimer;
   Timer? _liveOutputPulseTimer;
   DateTime? _lastHapticAt;
+
+  final _audioPlayer = AudioPlayer();
 
   bool initialized = false;
   bool isGenerating = false;
@@ -51,6 +56,7 @@ class AdoetzAppState extends ChangeNotifier {
   String selectedModel = 'gemini-2.5-flash';
   bool isThinkingMode = false;
   bool isArtifactMode = false;
+  bool soundEffectsEnabled = true;
 
   UserAccount? currentUser;
   String authToken = '';
@@ -75,6 +81,13 @@ class AdoetzAppState extends ChangeNotifier {
   List<String> geminiModels = const [];
   List<EndpointModel> endpointModels = const [];
   List<String> models = const ['gemini-2.5-flash'];
+
+  Future<void> _playSound(String name) async {
+    if (!soundEffectsEnabled) return;
+    try {
+      await _audioPlayer.play(AssetSource('audio/$name'));
+    } catch (_) {}
+  }
 
   List<Session> get activeSessions {
     final list = sessions.where((session) => !session.deleted).toList();
@@ -135,6 +148,7 @@ class AdoetzAppState extends ChangeNotifier {
     notifyListeners();
     unawaited(fetchModels());
     unawaited(_persist());
+    createTemporarySession();
   }
 
   PersistedAppState buildState() {
@@ -156,6 +170,9 @@ class AdoetzAppState extends ChangeNotifier {
       selectedModel: selectedModel,
       isThinkingMode: isThinkingMode,
       isArtifactMode: isArtifactMode,
+      soundEffectsEnabled: soundEffectsEnabled,
+      isLiveVideoEnabled: isLiveVideoEnabled,
+      isLiveFrontCamera: isLiveFrontCamera,
       userName: userName,
       geminiApiKey: geminiApiKey,
       endpoints: endpoints,
@@ -179,6 +196,9 @@ class AdoetzAppState extends ChangeNotifier {
     selectedModel = state.selectedModel;
     isThinkingMode = state.isThinkingMode;
     isArtifactMode = state.isArtifactMode;
+    soundEffectsEnabled = state.soundEffectsEnabled;
+    isLiveVideoEnabled = state.isLiveVideoEnabled;
+    isLiveFrontCamera = state.isLiveFrontCamera;
     userName = state.userName;
     geminiApiKey = state.geminiApiKey;
     endpoints = state.endpoints.isEmpty ? endpoints : state.endpoints;
@@ -267,6 +287,9 @@ class AdoetzAppState extends ChangeNotifier {
       memories: mergedMemories,
       tokenUsageData: mergedUsage,
       customCounters: counterMap.values.toList(),
+      soundEffectsEnabled: remoteIsNewer ? remote.soundEffectsEnabled : local.soundEffectsEnabled,
+      isLiveVideoEnabled: remoteIsNewer ? remote.isLiveVideoEnabled : local.isLiveVideoEnabled,
+      isLiveFrontCamera: remoteIsNewer ? remote.isLiveFrontCamera : local.isLiveFrontCamera,
       savedAt: DateTime.now().millisecondsSinceEpoch,
     );
   }
@@ -427,6 +450,20 @@ class AdoetzAppState extends ChangeNotifier {
     unawaited(_persistAndScheduleRemote());
   }
 
+  void setArtifactMode(bool enabled) {
+    if (isArtifactMode == enabled) return;
+    isArtifactMode = enabled;
+    notifyListeners();
+    unawaited(_persist());
+  }
+
+  void setSoundEffectsEnabled(bool enabled) {
+    if (soundEffectsEnabled == enabled) return;
+    soundEffectsEnabled = enabled;
+    notifyListeners();
+    unawaited(_persist());
+  }
+
   void setSelectedModel(String model) {
     selectedModel = model;
     notifyListeners();
@@ -578,6 +615,8 @@ class AdoetzAppState extends ChangeNotifier {
     List<AttachmentData> attachments,
   ) async {
     if (isGenerating || (prompt.trim().isEmpty && attachments.isEmpty)) return;
+    unawaited(_playSound('send_user_message.wav'));
+    unawaited(_playSound('loading_ai_response.wav'));
     final session = currentSession;
     final now = DateTime.now();
     final userMessage = Message(
@@ -624,14 +663,31 @@ class AdoetzAppState extends ChangeNotifier {
       );
     }
 
-    String pendingBotText = '';
-    Timer? textFlushTimer;
-    void flushBotText() {
-      textFlushTimer?.cancel();
-      textFlushTimer = null;
-      if (pendingBotText.isNotEmpty) {
-        _updateBotMessage(session.id, botId, pendingBotText);
-      }
+    String fullBotText = '';
+    String displayedBotText = '';
+    Timer? typingTimer;
+
+    void startTypingTimer() {
+      typingTimer ??= Timer.periodic(const Duration(milliseconds: 20), (timer) {
+        if (!isGenerating) {
+          timer.cancel();
+          typingTimer = null;
+          if (displayedBotText != fullBotText) {
+            _updateBotMessage(session.id, botId, fullBotText);
+          }
+          return;
+        }
+
+        if (displayedBotText.length < fullBotText.length) {
+          int diff = fullBotText.length - displayedBotText.length;
+          int charsToAdd = (diff / 6).ceil().clamp(1, 15);
+          displayedBotText = fullBotText.substring(
+            0,
+            displayedBotText.length + charsToAdd,
+          );
+          _updateBotMessage(session.id, botId, displayedBotText);
+        }
+      });
     }
 
     try {
@@ -653,15 +709,12 @@ class AdoetzAppState extends ChangeNotifier {
           _updateBotMessage(session.id, botId, status);
         },
         onText: (text) {
-          pendingBotText = text;
+          fullBotText = text;
           _maybeHapticForStreaming(text);
-          textFlushTimer ??= Timer(
-            const Duration(milliseconds: 70),
-            flushBotText,
-          );
+          startTypingTimer();
         },
       );
-      flushBotText();
+      typingTimer?.cancel();
       _updateBotMessage(
         session.id,
         botId,
@@ -686,7 +739,7 @@ class AdoetzAppState extends ChangeNotifier {
         'Error: ${error.toString().replaceFirst('Exception: ', '')}',
       );
     } finally {
-      textFlushTimer?.cancel();
+      typingTimer?.cancel();
       isGenerating = false;
       notifyListeners();
       await _persistAndScheduleRemote();
@@ -700,6 +753,18 @@ class AdoetzAppState extends ChangeNotifier {
 
   Future<void> startLiveConversation() async {
     if (isLiveActive || isLiveConnecting) return;
+
+    if (!kIsWeb) {
+      final micStatus = await Permission.microphone.request();
+      if (micStatus != PermissionStatus.granted) {
+        syncStatus = 'Microphone permission is required for Live Mode.';
+        notifyListeners();
+        return;
+      }
+    }
+
+    unawaited(_playSound('start_voice_mode.wav'));
+
     final liveModels = _liveModelCandidates();
     isLiveActive = true;
     isLiveConnecting = true;
@@ -757,8 +822,7 @@ class AdoetzAppState extends ChangeNotifier {
         },
         onLevel: (level) {
           if (_liveService != service) return;
-          liveInputLevel = level;
-          notifyListeners();
+          _setLiveInputLevel(level);
         },
         onOutputLevel: (level) {
           if (_liveService != service) return;
@@ -830,6 +894,7 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   Future<void> stopLiveConversation() async {
+    unawaited(_playSound('end_voice_mode.wav'));
     final service = _liveService;
     _liveService = null;
     _clearLiveState();
@@ -857,11 +922,13 @@ class AdoetzAppState extends ChangeNotifier {
   void toggleLiveVideo() {
     isLiveVideoEnabled = !isLiveVideoEnabled;
     notifyListeners();
+    unawaited(_persist());
   }
 
   void toggleLiveCameraFacing() {
     isLiveFrontCamera = !isLiveFrontCamera;
     notifyListeners();
+    unawaited(_persist());
   }
 
   void sendLiveVideoFrame(Uint8List bytes, {String mimeType = 'image/jpeg'}) {
@@ -1013,6 +1080,13 @@ class AdoetzAppState extends ChangeNotifier {
       isFetchingModels = false;
       notifyListeners();
     }
+  }
+
+  Future<List<String>> fetchEndpointModels(EndpointConfig endpoint) async {
+    return _ai.fetchAvailableModelsForEndpoint(
+      endpoint: endpoint,
+      syncSettings: syncSettings,
+    );
   }
 
   Future<void> saveSettings() async {
@@ -1184,6 +1258,8 @@ class AdoetzAppState extends ChangeNotifier {
     isLiveFrontCamera = false;
     liveInputLevel = 0;
     liveOutputLevel = 0;
+    _liveInputReleaseTimer?.cancel();
+    _liveInputReleaseTimer = null;
     _liveOutputPulseTimer?.cancel();
     _liveOutputPulseTimer = null;
     _liveUserMessageId = null;
@@ -1274,11 +1350,33 @@ class AdoetzAppState extends ChangeNotifier {
     );
   }
 
+  void _setLiveInputLevel(double level) {
+    final visualLevel = _visualLiveLevel(level);
+    liveInputLevel = visualLevel >= liveInputLevel
+        ? visualLevel
+        : liveInputLevel * 0.38 + visualLevel * 0.62;
+    _liveInputReleaseTimer?.cancel();
+    if (liveInputLevel <= 0.01) {
+      liveInputLevel = 0;
+      _liveInputReleaseTimer = null;
+      notifyListeners();
+      return;
+    }
+    _liveInputReleaseTimer = Timer(const Duration(milliseconds: 240), () {
+      liveInputLevel = 0;
+      notifyListeners();
+    });
+    notifyListeners();
+  }
+
   void _setLiveOutputLevel(
     double level, {
-    Duration releaseAfter = const Duration(milliseconds: 360),
+    Duration releaseAfter = const Duration(milliseconds: 260),
   }) {
-    liveOutputLevel = level.clamp(0.0, 1.0).toDouble();
+    final visualLevel = _visualLiveLevel(level);
+    liveOutputLevel = visualLevel >= liveOutputLevel
+        ? visualLevel
+        : liveOutputLevel * 0.42 + visualLevel * 0.58;
     _liveOutputPulseTimer?.cancel();
     if (liveOutputLevel <= 0) {
       _liveOutputPulseTimer = null;
@@ -1290,6 +1388,13 @@ class AdoetzAppState extends ChangeNotifier {
       notifyListeners();
     });
     notifyListeners();
+  }
+
+  double _visualLiveLevel(double rms) {
+    final value = rms.clamp(0.0, 1.0).toDouble();
+    if (value <= 0.004) return 0;
+    final gated = ((value - 0.004) / 0.115).clamp(0.0, 1.0).toDouble();
+    return math.pow(gated, 0.55).toDouble().clamp(0.0, 1.0).toDouble();
   }
 
   String _cleanLiveError(Object error) {

@@ -175,6 +175,35 @@ class AiService {
     );
   }
 
+  Future<List<String>> fetchAvailableModelsForEndpoint({
+    required EndpointConfig endpoint,
+    required SyncSettings syncSettings,
+  }) async {
+    if (endpoint.url.trim().isEmpty) {
+      throw Exception('Endpoint URL is empty.');
+    }
+    if (endpoint.key.trim().isEmpty || endpoint.key == 'sk-...') {
+      throw Exception('API key is missing.');
+    }
+    try {
+      final response = await _getWithProxyFallback(
+        Uri.parse('${_endpointBase(endpoint.url)}/models'),
+        {'Authorization': 'Bearer ${endpoint.key}'},
+        syncSettings,
+      );
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body);
+        return _extractModelIds(data).where((name) => name.isNotEmpty).toList();
+      } else {
+        throw Exception(
+          'Fetch failed (${response.statusCode}): ${_extractApiError(response.body, 'No response body.')}',
+        );
+      }
+    } catch (error) {
+      throw Exception('Model fetch failed: ${_cleanError(error)}');
+    }
+  }
+
   Future<GeneratedResponse> sendMessage({
     required String prompt,
     required List<AttachmentData> attachments,

@@ -39,6 +39,7 @@ class GeminiLiveService {
 
   static const _inputSampleRate = 24000;
   static const _outputSampleRate = 24000;
+  static const _outputLevelWindow = Duration(milliseconds: 80);
   static const _inputMimeType = 'audio/pcm;rate=$_inputSampleRate';
   static const _liveEndpointPath =
       '/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
@@ -67,6 +68,8 @@ class GeminiLiveService {
   StreamSubscription<dynamic>? _socketSub;
   StreamSubscription<Uint8List>? _micSub;
   Completer<void>? _setupCompleter;
+  final List<Timer> _outputLevelTimers = [];
+  DateTime _nextOutputLevelAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _lastVideoFrameMs = 0;
   bool _running = false;
   bool _recording = false;
@@ -171,6 +174,7 @@ class GeminiLiveService {
     await _stopRecorder();
     await _socketSub?.cancel();
     _socketSub = null;
+    _cancelOutputLevelTimers(reset: false);
     try {
       await _channel?.sink.close();
     } catch (_) {}
@@ -242,7 +246,7 @@ class GeminiLiveService {
                 final encoded = stringValue(inlineData['data']);
                 if (encoded.isNotEmpty) {
                   final bytes = base64Decode(encoded);
-                  onOutputLevel(_pcmLevel(bytes));
+                  _scheduleOutputLevels(bytes);
                   _player.playPcm16(bytes, sampleRate: _outputSampleRate);
                 }
               }
@@ -252,7 +256,7 @@ class GeminiLiveService {
 
         if (serverContent['interrupted'] == true) {
           onStatus('Interrupted.');
-          onOutputLevel(0);
+          _cancelOutputLevelTimers();
           _player.stop().then(
             (_) => _player.start(sampleRate: _outputSampleRate),
             onError: (_) {},
@@ -261,7 +265,6 @@ class GeminiLiveService {
 
         if (serverContent['turnComplete'] == true) {
           onLevel(0);
-          onOutputLevel(0);
           onTurnComplete();
         }
       }
@@ -302,6 +305,7 @@ class GeminiLiveService {
     _closed = true;
     _running = false;
     _recording = false;
+    _cancelOutputLevelTimers(reset: false);
     onRecordingChanged(false);
     onLevel(0);
     onOutputLevel(0);
@@ -370,6 +374,57 @@ class GeminiLiveService {
       sum += sample * sample;
     }
     return math.sqrt(sum / sampleCount).clamp(0.0, 1.0);
+  }
+
+  void _scheduleOutputLevels(Uint8List bytes) {
+    if (bytes.length < 2) return;
+    final now = DateTime.now();
+    var cursor = _nextOutputLevelAt.isAfter(now) ? _nextOutputLevelAt : now;
+    final sampleCount = bytes.length ~/ 2;
+    final samplesPerWindow =
+        (_outputSampleRate * _outputLevelWindow.inMilliseconds / 1000).round();
+
+    for (var start = 0; start < sampleCount; start += samplesPerWindow) {
+      final end = math.min(start + samplesPerWindow, sampleCount);
+      final segment = Uint8List.sublistView(bytes, start * 2, end * 2);
+      final level = _pcmLevel(segment);
+      final delay = cursor.difference(now);
+      _scheduleOutputLevelTimer(
+        delay.isNegative ? Duration.zero : delay,
+        level,
+      );
+      final windowMs = ((end - start) / _outputSampleRate * 1000).round();
+      cursor = cursor.add(
+        Duration(
+          milliseconds: math.max(windowMs, _outputLevelWindow.inMilliseconds),
+        ),
+      );
+    }
+
+    _nextOutputLevelAt = cursor;
+    _scheduleOutputLevelTimer(
+      cursor.add(const Duration(milliseconds: 180)).difference(now),
+      0,
+    );
+  }
+
+  void _scheduleOutputLevelTimer(Duration delay, double level) {
+    late final Timer timer;
+    timer = Timer(delay, () {
+      _outputLevelTimers.remove(timer);
+      if (_closed) return;
+      onOutputLevel(level);
+    });
+    _outputLevelTimers.add(timer);
+  }
+
+  void _cancelOutputLevelTimers({bool reset = true}) {
+    for (final timer in List<Timer>.from(_outputLevelTimers)) {
+      timer.cancel();
+    }
+    _outputLevelTimers.clear();
+    _nextOutputLevelAt = DateTime.now();
+    if (reset) onOutputLevel(0);
   }
 
   String _formatLiveModel(String value) {

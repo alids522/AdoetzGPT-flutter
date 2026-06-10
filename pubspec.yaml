@@ -57,6 +57,7 @@ dependencies:
   record: ^7.0.0
   permission_handler: ^12.0.3
   postgres: ^3.5.11
+
   bcrypt: ^1.2.0
   mime: ^2.0.0
   path: ^1.9.1
@@ -65,11 +66,19 @@ dependencies:
   flutter_markdown_latex: ^0.3.4
   camera: any
   camera_web: ^0.3.4
+  audioplayers: ^6.1.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.13.1
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "android logo.png"
 flutter:
   uses-material-design: true
   assets:
     - assets/app_logo.png
+    - assets/audio/

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -154,7 +155,33 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                     child: SizedBox(
                       width: double.infinity,
                       child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
+                        duration: const Duration(milliseconds: 600),
+                        reverseDuration: const Duration(milliseconds: 400),
+                        switchInCurve: Curves.easeOutBack, // Mimics spring stiffness 400 damping 15
+                        switchOutCurve: Curves.easeIn,
+                        transitionBuilder: (child, animation) {
+                          final isIncoming = child.key ==
+                              (app.isLiveActive || app.isLiveConnecting
+                                  ? const ValueKey('voice-overlay')
+                                  : const ValueKey('input-pod'));
+
+                          return AnimatedBuilder(
+                            animation: animation,
+                            builder: (context, childWidget) {
+                              final offsetY = isIncoming
+                                  ? Tween<double>(begin: 80.0, end: 0.0).evaluate(animation)
+                                  : Tween<double>(begin: -80.0, end: 0.0).evaluate(animation);
+                              return Transform.translate(
+                                offset: Offset(0, offsetY),
+                                child: Opacity(
+                                  opacity: animation.value.clamp(0.0, 1.0),
+                                  child: childWidget,
+                                ),
+                              );
+                            },
+                            child: child,
+                          );
+                        },
                         child: app.isLiveActive || app.isLiveConnecting
                             ? _VoiceOverlay(
                                 key: const ValueKey('voice-overlay'),
@@ -543,75 +570,109 @@ class _MessageBubble extends StatelessWidget {
       child: Column(
         crossAxisAlignment: align,
         children: [
-          ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: maxWidth),
-            child: Container(
-              padding: message.isUser
-                  ? const EdgeInsets.symmetric(horizontal: 20, vertical: 14)
-                  : const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              decoration: message.isUser
-                  ? BoxDecoration(
-                      color: p.primary,
-                      borderRadius: BorderRadius.circular(22),
+          TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 0.0, end: 1.0),
+            duration: const Duration(milliseconds: 460),
+            curve: Curves.easeOutBack,
+            builder: (context, value, child) {
+              final radius = message.isUser
+                  ? BorderRadius.only(
+                      topLeft: Radius.circular(50 - 26 * value),
+                      topRight: Radius.circular(50 - 26 * value),
+                      bottomLeft: Radius.circular(50 - 26 * value),
+                      bottomRight: Radius.circular(50 - 46 * value),
                     )
-                  : null,
-              child: editing
-                  ? Column(
-                      children: [
-                        TextField(
-                          controller: editController,
-                          minLines: 2,
-                          maxLines: 8,
-                          decoration: const InputDecoration(
-                            hintText: 'Edit message',
-                          ),
-                        ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            TextButton(
-                              onPressed: onEditCancel,
-                              child: const Text('Cancel'),
+                  : null;
+              return Transform.scale(
+                scale: 0.2 + 0.8 * value,
+                alignment: message.isUser
+                    ? Alignment.bottomRight
+                    : Alignment.bottomLeft,
+                child: Opacity(
+                  opacity: value.clamp(0.0, 1.0),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: maxWidth),
+                    child: Container(
+                      padding: message.isUser
+                          ? const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 14,
+                            )
+                          : const EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 16,
                             ),
-                            FilledButton(
-                              onPressed: onEditSave,
-                              child: const Text('Save'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    )
-                  : Column(
-                      crossAxisAlignment: message.isUser
-                          ? CrossAxisAlignment.end
-                          : CrossAxisAlignment.start,
-                      children: [
-                        if (!message.isUser && parsed.thinkContent != null)
-                          _ThoughtBlock(
-                            content: parsed.thinkContent!,
-                            active: parsed.isThinkingStill,
-                          ),
-                        if (message.attachments.isNotEmpty)
-                          _MessageAttachments(files: message.attachments),
-                        if (message.isUser)
-                          Text(
-                            message.text,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              height: 1.45,
-                            ),
-                          )
-                        else
-                          _MarkdownMessage(
-                            data: parsed.mainContent.isEmpty && app.isGenerating
-                                ? 'Thinking...'
-                                : parsed.mainContent,
-                            palette: p,
-                          ),
-                      ],
+                      decoration: message.isUser
+                          ? BoxDecoration(
+                              color: p.primary,
+                              borderRadius: radius,
+                            )
+                          : null,
+                      child: child,
                     ),
-            ),
+                  ),
+                ),
+              );
+            },
+            child: editing
+                ? Column(
+                    children: [
+                      TextField(
+                        controller: editController,
+                        minLines: 2,
+                        maxLines: 8,
+                        decoration: const InputDecoration(
+                          hintText: 'Edit message',
+                        ),
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: onEditCancel,
+                            child: const Text('Cancel'),
+                          ),
+                          FilledButton(
+                            onPressed: onEditSave,
+                            child: const Text('Save'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  )
+                : Column(
+                    crossAxisAlignment: message.isUser
+                        ? CrossAxisAlignment.end
+                        : CrossAxisAlignment.start,
+                    children: [
+                      if (!message.isUser && parsed.thinkContent != null)
+                        _ThoughtBlock(
+                          content: parsed.thinkContent!,
+                          active: parsed.isThinkingStill,
+                        ),
+                      if (message.attachments.isNotEmpty)
+                        _MessageAttachments(files: message.attachments),
+                      if (message.isUser)
+                        Text(
+                          message.text,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            height: 1.45,
+                          ),
+                        )
+                      else if (parsed.mainContent.isEmpty && app.isGenerating)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                          child: _PolygonProgressionLoading(),
+                        )
+                      else
+                        _MarkdownMessage(
+                          data: parsed.mainContent,
+                          palette: p,
+                        ),
+                    ],
+                  ),
           ),
           if (!editing)
             Padding(
@@ -968,6 +1029,119 @@ class _InlineCodeBuilder extends MarkdownElementBuilder {
           fontSize: 13.5,
           fontFamily: 'monospace',
         ),
+      ),
+    );
+  }
+}
+
+class _PolygonProgressionLoading extends StatefulWidget {
+  const _PolygonProgressionLoading();
+
+  @override
+  State<_PolygonProgressionLoading> createState() => _PolygonProgressionLoadingState();
+}
+
+class _PolygonProgressionLoadingState extends State<_PolygonProgressionLoading> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  
+  static const double _dotSize = 6.0;
+  static const double _dist = 16.0;
+  
+  static const List<List<double>> _xs = [
+    [0, -1, 0, -0.8, 0, 0, 0],
+    [0, 1, 0.866, 0.8, 0.951, 0.866, 0],
+    [0, 0, -0.866, 0.8, 0.588, 0.866, 0],
+    [0, 0, 0, -0.8, -0.588, 0, 0],
+    [0, 0, 0, 0, -0.951, -0.866, 0],
+    [0, 0, 0, 0, 0, -0.866, 0]
+  ];
+  
+  static const List<List<double>> _ys = [
+    [0, 0, -1, -0.8, -1, -1, 0],
+    [0, 0, 0.5, -0.8, -0.309, -0.5, 0],
+    [0, 0, 0.5, 0.8, 0.809, 0.5, 0],
+    [0, 0, 0, 0.8, 0.809, 1, 0],
+    [0, 0, 0, 0, -0.309, -0.5, 0],
+    [0, 0, 0, 0, 0, 0.5, 0]
+  ];
+  
+  static const List<List<double>> _ss = [
+    [1, 1, 1, 1, 1, 1, 1],
+    [0, 1, 1, 1, 1, 1, 0],
+    [0, 0, 1, 1, 1, 1, 0],
+    [0, 0, 0, 1, 1, 1, 0],
+    [0, 0, 0, 0, 1, 1, 0],
+    [0, 0, 0, 0, 0, 1, 0]
+  ];
+
+  late final List<Animation<double>> _xAnims;
+  late final List<Animation<double>> _yAnims;
+  late final List<Animation<double>> _sAnims;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 4670),
+    )..repeat();
+
+    _xAnims = List.generate(6, (i) => _createTween(_xs[i], true).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)));
+    _yAnims = List.generate(6, (i) => _createTween(_ys[i], true).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)));
+    _sAnims = List.generate(6, (i) => _createTween(_ss[i], false).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)));
+  }
+
+  TweenSequence<double> _createTween(List<double> values, bool multiplyDist) {
+    return TweenSequence<double>(
+      List.generate(6, (j) {
+        return TweenSequenceItem(
+          tween: Tween<double>(
+            begin: values[j] * (multiplyDist ? _dist : 1.0),
+            end: values[j + 1] * (multiplyDist ? _dist : 1.0),
+          ),
+          weight: 1.0,
+        );
+      }),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, child) {
+          return Stack(
+            alignment: Alignment.center,
+            children: List.generate(6, (i) {
+              return Transform.translate(
+                offset: Offset(_xAnims[i].value, _yAnims[i].value),
+                child: Transform.scale(
+                  scale: _sAnims[i].value,
+                  child: Opacity(
+                    opacity: _sAnims[i].value,
+                    child: Container(
+                      width: _dotSize,
+                      height: _dotSize,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          );
+        },
       ),
     );
   }
@@ -1479,7 +1653,7 @@ class _VoiceOverlay extends StatelessWidget {
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 430;
           final buttonSize = compact ? 42.0 : 48.0;
-          final capsuleBaseWidth = compact ? 112.0 : 148.0;
+          final capsuleBaseWidth = compact ? 144.0 : 176.0;
           return Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -1508,7 +1682,7 @@ class _VoiceOverlay extends StatelessWidget {
               SizedBox(width: compact ? 8 : 16),
               _LiveStatusCapsule(
                 width: capsuleBaseWidth,
-                height: 42,
+                height: 52,
                 recording: recording,
                 connecting: connecting,
                 level: level,
@@ -1724,18 +1898,12 @@ class _LiveStatusCapsule extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final activeLevel = math.max(level, outputLevel).clamp(0.0, 1.0).toDouble();
-    final isOutput = outputLevel > math.max(level, 0.03);
+    final isOutput = outputLevel > math.max(level, 0.04);
     final idleLevel = connecting ? 0.18 : 0.0;
-    final visualLevel = math
+    final amplitude = math
         .max(activeLevel, idleLevel)
         .clamp(0.0, 1.0)
         .toDouble();
-    final capsuleWidth = width + visualLevel * 44;
-    final capsuleHeight = height + visualLevel * 3;
-    final glowAlpha = (0.18 + visualLevel * 0.62).clamp(0.18, 0.80).toDouble();
-    final blurAmount = 15.0 + visualLevel * 30;
-    const capsuleColor = Color(0xff2563eb);
-    const capsuleColorEnd = Color(0xff60a5fa);
     final label = connecting
         ? 'Connecting...'
         : (isOutput
@@ -1743,100 +1911,122 @@ class _LiveStatusCapsule extends StatelessWidget {
               : (status.trim().isEmpty
                     ? (recording ? 'Listening...' : 'Paused')
                     : status.trim()));
-    return AnimatedContainer(
+
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(end: amplitude),
       duration: const Duration(milliseconds: 120),
-      curve: Curves.easeOut,
-      width: capsuleWidth,
-      height: capsuleHeight,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(capsuleHeight / 2),
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.black.withValues(alpha: 0.96),
-            capsuleColor.withValues(
-              alpha: recording || isOutput || connecting ? 0.96 : 0.68,
-            ),
-            capsuleColorEnd.withValues(
-              alpha: recording || isOutput || connecting ? 0.94 : 0.66,
-            ),
-          ],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: capsuleColor.withValues(alpha: glowAlpha),
-            blurRadius: blurAmount,
-            spreadRadius: activeLevel * 4,
-            offset: const Offset(0, 6),
+      curve: Curves.easeOutBack,
+      builder: (context, value, child) {
+        final scaleY = 1.0 + value * 1.6;
+        final fogScale = 1.2 + value * 0.9;
+        final radius = height > 84 ? 60.0 : height / 2;
+        final coreHeight = height * 0.39;
+        final fogHeight = height * 0.28;
+        final fogInset = width * 0.15;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOutBack,
+          width: width,
+          height: height,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: Colors.black,
+            borderRadius: BorderRadius.circular(radius),
+            border: Border.all(color: const Color(0xff171717)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.55),
+                blurRadius: 24,
+                offset: const Offset(0, 12),
+              ),
+              BoxShadow(
+                color: const Color(
+                  0xff2563eb,
+                ).withValues(alpha: 0.12 + value * 0.28),
+                blurRadius: 18 + value * 24,
+                spreadRadius: value * 3,
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
+          child: Stack(
             children: [
-              _LiveLevelGlyph(level: visualLevel),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                height: coreHeight,
+                child: Transform.scale(
+                  alignment: Alignment.bottomCenter,
+                  scaleY: scaleY,
+                  child: ImageFiltered(
+                    imageFilter: ui.ImageFilter.blur(
+                      sigmaX: height * 0.12,
+                      sigmaY: height * 0.12,
+                    ),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.vertical(
+                          bottom: Radius.circular(radius),
+                        ),
+                        gradient: const RadialGradient(
+                          center: Alignment.bottomCenter,
+                          radius: 1.5,
+                          colors: [
+                            Color(0xff2563eb),
+                            Color(0x440744d5),
+                            Colors.transparent,
+                          ],
+                          stops: [0.0, 0.55, 1.0],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: math.max(2, height * 0.03),
+                left: fogInset,
+                right: fogInset,
+                height: fogHeight,
+                child: Transform.scale(
+                  alignment: Alignment.bottomCenter,
+                  scale: fogScale,
+                  child: ImageFiltered(
+                    imageFilter: ui.ImageFilter.blur(
+                      sigmaX: height * 0.08,
+                      sigmaY: height * 0.08,
+                    ),
+                    child: Opacity(
+                      opacity: 0.22 + value * 0.16,
+                      child: const DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Color(0xff0744d5),
+                          borderRadius: BorderRadius.all(Radius.circular(999)),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                 ),
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _LiveLevelGlyph extends StatelessWidget {
-  const _LiveLevelGlyph({required this.level});
-
-  final double level;
-
-  @override
-  Widget build(BuildContext context) {
-    final clamped = level.clamp(0.0, 1.0).toDouble();
-    return SizedBox(
-      width: 18,
-      height: 18,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          for (final weight in const [0.62, 1.0, 0.76])
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 1.2),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 95),
-                curve: Curves.easeOut,
-                width: 3,
-                height: 5 + clamped * 12 * weight,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.58 + clamped * 0.42),
-                  borderRadius: BorderRadius.circular(2),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.white.withValues(alpha: clamped * 0.38),
-                      blurRadius: 6 + clamped * 8,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

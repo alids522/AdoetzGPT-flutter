@@ -191,6 +191,17 @@ class _ExperienceSection extends StatelessWidget {
               style: TextStyle(color: p.onSurfaceVariant, fontSize: 12),
             ),
           ),
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            value: app.soundEffectsEnabled,
+            onChanged: (value) => app.setSoundEffectsEnabled(value),
+            title: const Text('Sound effects'),
+            subtitle: Text(
+              'Play audio cues for messaging and voice mode.',
+              style: TextStyle(color: p.onSurfaceVariant, fontSize: 12),
+            ),
+          ),
         ],
       ),
     );
@@ -764,21 +775,50 @@ class _EndpointSection extends StatelessWidget {
                       onChanged: (value) =>
                           update(endpoint.copyWith(skipModelFetch: value)),
                     ),
-                    _SettingField(
-                      label: 'Predefined Models',
-                      initialValue: endpoint.models.join('\n'),
-                      minLines: 2,
-                      maxLines: 5,
-                      hint: 'One model per line',
-                      onChanged: (value) => update(
-                        endpoint.copyWith(
-                          models: value
-                              .split(RegExp(r'[\n,]'))
-                              .map((item) => item.trim())
-                              .where((item) => item.isNotEmpty)
-                              .toList(),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: _SettingField(
+                            label: 'Predefined Models',
+                            initialValue: endpoint.models.join('\n'),
+                            minLines: 2,
+                            maxLines: 5,
+                            hint: 'One model per line',
+                            onChanged: (value) => update(
+                              endpoint.copyWith(
+                                models: value
+                                    .split(RegExp(r'[\n,]'))
+                                    .map((item) => item.trim())
+                                    .where((item) => item.isNotEmpty)
+                                    .toList(),
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 8),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 24.0),
+                          child: FilledButton.icon(
+                            onPressed: () => showDialog<void>(
+                              context: context,
+                              builder: (_) => _ModelSelectionDialog(
+                                endpoint: endpoint,
+                                onSave: (models) {
+                                  update(
+                                    endpoint.copyWith(
+                                      models: models,
+                                      skipModelFetch: true,
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            icon: const Icon(LucideIcons.cloudDownload, size: 16),
+                            label: const Text('Fetch'),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1276,3 +1316,171 @@ TextStyle _labelStyle(BuildContext context) {
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
 }
+
+class _ModelSelectionDialog extends StatefulWidget {
+  const _ModelSelectionDialog({required this.endpoint, required this.onSave});
+
+  final EndpointConfig endpoint;
+  final ValueChanged<List<String>> onSave;
+
+  @override
+  State<_ModelSelectionDialog> createState() => _ModelSelectionDialogState();
+}
+
+class _ModelSelectionDialogState extends State<_ModelSelectionDialog> {
+  List<String>? _availableModels;
+  String _error = '';
+  String _searchQuery = '';
+  final Set<String> _selectedModels = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedModels.addAll(widget.endpoint.models);
+    _fetchModels();
+  }
+
+  Future<void> _fetchModels() async {
+    try {
+      final app = context.read<AdoetzAppState>();
+      final models = await app.fetchEndpointModels(widget.endpoint);
+      if (mounted) {
+        setState(() {
+          _availableModels = models;
+          // Add previously selected ones that might not be in the list
+          for (final selected in _selectedModels) {
+            if (!models.contains(selected)) {
+              _availableModels!.add(selected);
+            }
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+
+    final filteredModels =
+        _availableModels
+            ?.where(
+              (m) => m.toLowerCase().contains(_searchQuery.toLowerCase()),
+            )
+            .toList() ??
+        [];
+
+    return AlertDialog(
+      title: Text('Models for ${widget.endpoint.name}'),
+      backgroundColor: p.surface,
+      contentPadding: const EdgeInsets.symmetric(vertical: 16),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: TextField(
+                decoration: const InputDecoration(
+                  labelText: 'Search models',
+                  prefixIcon: Icon(LucideIcons.search),
+                ),
+                onChanged: (val) => setState(() => _searchQuery = val),
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (_availableModels == null && _error.isEmpty)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(),
+                ),
+              )
+            else if (_error.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(_error, style: TextStyle(color: p.error)),
+              )
+            else
+              Flexible(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _selectedModels.addAll(filteredModels);
+                              });
+                            },
+                            child: const Text('Select All'),
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _selectedModels.removeAll(filteredModels);
+                              });
+                            },
+                            child: const Text('Deselect All'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(),
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: filteredModels.length,
+                        itemBuilder: (context, index) {
+                          final model = filteredModels[index];
+                          return CheckboxListTile(
+                            title: Text(model, style: const TextStyle(fontSize: 14)),
+                            value: _selectedModels.contains(model),
+                            onChanged: (selected) {
+                              setState(() {
+                                if (selected == true) {
+                                  _selectedModels.add(model);
+                                } else {
+                                  _selectedModels.remove(model);
+                                }
+                              });
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            widget.onSave(_selectedModels.toList());
+            Navigator.pop(context);
+          },
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+

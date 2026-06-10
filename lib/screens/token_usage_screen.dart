@@ -643,62 +643,37 @@ class _ModelUsageRow extends StatelessWidget {
       Theme.of(context).brightness == Brightness.dark,
     );
     return Padding(
-      padding: EdgeInsets.symmetric(vertical: compact ? 5 : 7),
-      child: compact
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  stat.model,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: p.onSurface,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 3,
-                  children: [
-                    _UsageMetric(label: 'In', value: stat.input),
-                    _UsageMetric(label: 'Out', value: stat.output),
-                    _UsageMetric(
-                      label: 'Total',
-                      value: stat.total,
-                      strong: true,
-                    ),
-                    _UsageMetric(label: 'Count', value: stat.count),
-                  ],
-                ),
-              ],
-            )
-          : Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    stat.model,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: p.onSurface,
-                      fontSize: compact ? 11 : 13,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                _UsageMetric(label: 'Input', value: stat.input),
-                const SizedBox(width: 10),
-                _UsageMetric(label: 'Output', value: stat.output),
-                const SizedBox(width: 10),
-                _UsageMetric(label: 'Total', value: stat.total, strong: true),
-                const SizedBox(width: 10),
-                _UsageMetric(label: 'Count', value: stat.count),
-              ],
+      padding: EdgeInsets.symmetric(vertical: compact ? 5 : 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            stat.model,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: p.onSurface,
+              fontSize: compact ? 11 : 13,
+              fontWeight: FontWeight.w800,
             ),
+          ),
+          SizedBox(height: compact ? 3 : 6),
+          Wrap(
+            spacing: compact ? 8 : 16,
+            runSpacing: 4,
+            children: [
+              _UsageMetric(label: 'Input', value: stat.input),
+              _UsageMetric(label: 'Output', value: stat.output),
+              _UsageMetric(
+                label: 'Total',
+                value: stat.total,
+                strong: true,
+              ),
+              _UsageMetric(label: 'Count', value: stat.count),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
