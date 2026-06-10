@@ -278,7 +278,9 @@ class AiService {
         : selectedModel.trim();
     final titlePrompt =
         'Create a short title (maximum 3 to 4 words) for the following message.\n'
-        'Output ONLY the title. Do not use quotation marks, punctuation, or any introductory text.\n\n'
+        'Output ONLY the title. Do not use quotation marks, punctuation, or any introductory text.\n'
+        'Do not copy the message verbatim. Rephrase it as a topic.\n'
+        'Example: who are you -> Who Am I\n\n'
         '$message';
     final endpointModel = _resolveEndpointModel(
       modelName,
@@ -303,6 +305,7 @@ class AiService {
             endpoint: endpoint,
             syncSettings: syncSettings,
           ),
+          fallbackSource: message,
         );
       }
       return _sanitizeTitle(
@@ -311,9 +314,10 @@ class AiService {
           selectedModel: modelName,
           geminiApiKey: geminiApiKey,
         ),
+        fallbackSource: message,
       );
     } catch (_) {
-      return _sanitizeTitle(message);
+      return _fallbackTitleFromMessage(message);
     }
   }
 
@@ -593,7 +597,7 @@ class AiService {
               {
                 'role': 'system',
                 'content':
-                    'You create concise chat titles. Reply with only the title.',
+                    'You create concise 3 to 4 word chat titles. Reply with only the title. Never copy the user message verbatim. If the user asks "who are you", title it "Who Am I".',
               },
               {'role': 'user', 'content': prompt},
             ],
@@ -662,17 +666,140 @@ class AiService {
     return _geminiText(jsonDecode(response.body));
   }
 
-  String _sanitizeTitle(String value) {
-    final cleaned = value
+  String _sanitizeTitle(String value, {String fallbackSource = ''}) {
+    final fallback = _fallbackTitleFromMessage(fallbackSource);
+    var cleaned = value
         .replaceAll(RegExp(r'^title:\s*', caseSensitive: false), '')
+        .replaceAll(
+          RegExp(
+            r'^(?:input\s+message|user\s+message|message|conversation|prompt)\s*[:\-]?\s*',
+            caseSensitive: false,
+          ),
+          '',
+        )
         .replaceAll(RegExp(r'''["'`_*#\[\]()]'''), '')
         .replaceAll(RegExp(r'[^\w\s-]'), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
-        .trim()
+        .trim();
+
+    if (cleaned.isEmpty) return fallback;
+    final normalizedCleaned = _normalizedTitle(cleaned);
+    final normalizedSource = _normalizedTitle(fallbackSource);
+    if (normalizedCleaned == normalizedSource ||
+        normalizedSource.startsWith(normalizedCleaned)) {
+      return fallback;
+    }
+
+    cleaned = cleaned.split(RegExp(r'\s+')).take(4).join(' ');
+    final titled = _titleCase(cleaned);
+    return titled.length > 42 ? titled.substring(0, 42).trim() : titled;
+  }
+
+  String _fallbackTitleFromMessage(String value) {
+    final cleaned = value
+        .replaceAll(RegExp(r'''["'`_*#\[\]()]'''), '')
+        .replaceAll(RegExp(r'[^\w\s-]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (cleaned.isEmpty) return 'New Chat';
+
+    final normalized = _normalizedTitle(cleaned);
+    if (RegExp(r'\bwho\s+are\s+you\b').hasMatch(normalized)) {
+      return 'Who Am I';
+    }
+    if (RegExp(r'\bwhat\s+are\s+you\b').hasMatch(normalized)) {
+      return 'What Am I';
+    }
+    if (RegExp(r'\bwhat\s+can\s+you\s+do\b').hasMatch(normalized)) {
+      return 'Assistant Capabilities';
+    }
+
+    final topic = _extractTitleTopic(cleaned);
+    if (topic.isNotEmpty && _normalizedTitle(topic) != normalized) {
+      final topicWords = topic.split(RegExp(r'\s+'));
+      final title = topicWords.length <= 3 ? '$topic Basics' : topic;
+      return _titleCase(title.split(RegExp(r'\s+')).take(4).join(' '));
+    }
+
+    final words = cleaned.split(RegExp(r'\s+')).take(4).join(' ');
+    return _titleCase(words);
+  }
+
+  String _extractTitleTopic(String value) {
+    var topic = value
+        .replaceAll(
+          RegExp(r'\bin\s+simple\s+terms\b', caseSensitive: false),
+          '',
+        )
+        .replaceAll(
+          RegExp(r'\b(?:simple|simply|basic|basics)\b', caseSensitive: false),
+          '',
+        )
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    topic = topic
+        .replaceFirst(
+          RegExp(
+            r'^(?:please\s+)?(?:explain|describe|define|summarize|tell\s+me\s+about)\s+(?:what\s+(?:is|are)\s+)?',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .replaceFirst(
+          RegExp(r'^(?:what|who)\s+(?:is|are)\s+', caseSensitive: false),
+          '',
+        )
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return topic;
+  }
+
+  String _normalizedTitle(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^\w\s-]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  String _titleCase(String value) {
+    const smallWords = {
+      'a',
+      'an',
+      'and',
+      'are',
+      'as',
+      'at',
+      'for',
+      'in',
+      'of',
+      'on',
+      'or',
+      'the',
+      'to',
+    };
+    final words = value
         .split(RegExp(r'\s+'))
-        .take(4)
-        .join(' ');
-    return cleaned.length > 42 ? cleaned.substring(0, 42).trim() : cleaned;
+        .where((word) => word.trim().isNotEmpty)
+        .toList();
+    return [
+      for (var i = 0; i < words.length; i++)
+        _titleWord(
+          words[i],
+          keepLowercase: i > 0 && smallWords.contains(words[i].toLowerCase()),
+        ),
+    ].join(' ');
+  }
+
+  String _titleWord(String word, {required bool keepLowercase}) {
+    final lower = word.toLowerCase();
+    if (keepLowercase) return lower;
+    if (lower == 'ai') return 'AI';
+    if (lower == 'gpt') return 'GPT';
+    if (lower == 'html') return 'HTML';
+    if (lower == 'api') return 'API';
+    if (lower == 'i') return 'I';
+    return lower.substring(0, 1).toUpperCase() + lower.substring(1);
   }
 
   Future<http.StreamedResponse> _sendWithProxyFallback(

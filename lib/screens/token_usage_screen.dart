@@ -221,6 +221,8 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
           ),
         ),
         const SizedBox(height: 24),
+        _ModelUsageBreakdown(records: filtered),
+        const SizedBox(height: 24),
         _CustomCounters(
           filteredAll: app.tokenUsageData,
           selectedModel: selectedModel,
@@ -585,6 +587,149 @@ class _Dropdown extends StatelessWidget {
   }
 }
 
+class _ModelUsageBreakdown extends StatelessWidget {
+  const _ModelUsageBreakdown({required this.records});
+
+  final List<TokenUsageRecord> records;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    final stats = _modelStats(records);
+    return GlassPanel(
+      radius: 24,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(LucideIcons.bot, color: p.primary, size: 16),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'MODEL TOKEN BREAKDOWN',
+                  style: TextStyle(
+                    color: p.onSurface,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.6,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (stats.isEmpty)
+            Text('No model usage in this filter.', style: _mutedStyle(p))
+          else
+            ...stats.map((item) => _ModelUsageRow(stat: item)),
+        ],
+      ),
+    );
+  }
+}
+
+class _ModelUsageRow extends StatelessWidget {
+  const _ModelUsageRow({required this.stat, this.compact = false});
+
+  final _ModelUsageStat stat;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: compact ? 5 : 7),
+      child: compact
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  stat.model,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: p.onSurface,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 3,
+                  children: [
+                    _UsageMetric(label: 'In', value: stat.input),
+                    _UsageMetric(label: 'Out', value: stat.output),
+                    _UsageMetric(
+                      label: 'Total',
+                      value: stat.total,
+                      strong: true,
+                    ),
+                    _UsageMetric(label: 'Count', value: stat.count),
+                  ],
+                ),
+              ],
+            )
+          : Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    stat.model,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: p.onSurface,
+                      fontSize: compact ? 11 : 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _UsageMetric(label: 'Input', value: stat.input),
+                const SizedBox(width: 10),
+                _UsageMetric(label: 'Output', value: stat.output),
+                const SizedBox(width: 10),
+                _UsageMetric(label: 'Total', value: stat.total, strong: true),
+                const SizedBox(width: 10),
+                _UsageMetric(label: 'Count', value: stat.count),
+              ],
+            ),
+    );
+  }
+}
+
+class _UsageMetric extends StatelessWidget {
+  const _UsageMetric({
+    required this.label,
+    required this.value,
+    this.strong = false,
+  });
+
+  final String label;
+  final int value;
+  final bool strong;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    return Text(
+      '$label ${NumberFormat.compact().format(value)}',
+      style: TextStyle(
+        color: strong ? p.primary : p.onSurfaceVariant,
+        fontSize: 11,
+        fontWeight: strong ? FontWeight.w900 : FontWeight.w700,
+      ),
+    );
+  }
+}
+
 class _CustomCounters extends StatelessWidget {
   const _CustomCounters({
     required this.filteredAll,
@@ -652,6 +797,7 @@ class _CustomCounters extends StatelessWidget {
             runSpacing: 12,
             children: app.customCounters.map((counter) {
               final stats = _counterStats(counter);
+              final modelStats = _counterModelStats(counter);
               return SizedBox(
                 width: 270,
                 child: GlassPanel(
@@ -730,6 +876,14 @@ class _CustomCounters extends StatelessWidget {
                           ),
                         ],
                       ),
+                      if (modelStats.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Text('MODELS', style: _labelStyle(context)),
+                        const SizedBox(height: 4),
+                        ...modelStats.map(
+                          (stat) => _ModelUsageRow(stat: stat, compact: true),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -755,6 +909,17 @@ class _CustomCounters extends StatelessWidget {
       stats.count += 1;
     }
     return stats;
+  }
+
+  List<_ModelUsageStat> _counterModelStats(CustomCounter counter) {
+    return _modelStats(
+      filteredAll.where(
+        (item) =>
+            item.timestamp >= counter.createdAt &&
+            (selectedModel == 'all' || item.model == selectedModel) &&
+            (selectedEndpoint == 'all' || item.endpoint == selectedEndpoint),
+      ),
+    );
   }
 
   Color _color(String value) {
@@ -929,6 +1094,39 @@ class _CounterStats {
   int input = 0;
   int output = 0;
   int count = 0;
+}
+
+class _ModelUsageStat {
+  _ModelUsageStat(this.model);
+
+  final String model;
+  int input = 0;
+  int output = 0;
+  int total = 0;
+  int count = 0;
+}
+
+List<_ModelUsageStat> _modelStats(Iterable<TokenUsageRecord> records) {
+  final map = <String, _ModelUsageStat>{};
+  for (final record in records) {
+    final key = record.model.trim().isEmpty ? 'Unknown model' : record.model;
+    final stat = map.putIfAbsent(key, () => _ModelUsageStat(key));
+    stat.input += record.inputTokens;
+    stat.output += record.outputTokens;
+    stat.total += record.totalTokens;
+    stat.count += 1;
+  }
+  final result = map.values.toList()
+    ..sort((a, b) => b.total.compareTo(a.total));
+  return result;
+}
+
+TextStyle _mutedStyle(AppPalette p) {
+  return TextStyle(
+    color: p.onSurfaceVariant,
+    fontSize: 11,
+    fontWeight: FontWeight.w700,
+  );
 }
 
 TextStyle _labelStyle(BuildContext context) {

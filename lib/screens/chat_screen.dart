@@ -45,7 +45,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   void _onScroll() {
     if (!scrollController.hasClients) return;
-    final show = scrollController.offset <
+    final show =
+        scrollController.offset <
         scrollController.position.maxScrollExtent - 150;
     if (show != _showScrollToBottom) {
       setState(() => _showScrollToBottom = show);
@@ -95,7 +96,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         if (_showScrollToBottom)
           Positioned(
             right: 20,
-            bottom: 100,
+            bottom: 118,
             child: FloatingActionButton.small(
               backgroundColor: p.surface,
               elevation: 4,
@@ -685,11 +686,42 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-class _ThoughtBlock extends StatelessWidget {
+class _ThoughtBlock extends StatefulWidget {
   const _ThoughtBlock({required this.content, required this.active});
 
   final String content;
   final bool active;
+
+  @override
+  State<_ThoughtBlock> createState() => _ThoughtBlockState();
+}
+
+class _ThoughtBlockState extends State<_ThoughtBlock> {
+  final _controller = ScrollController();
+  bool _collapsed = false;
+
+  @override
+  void didUpdateWidget(covariant _ThoughtBlock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_collapsed &&
+        widget.active &&
+        widget.content.length != oldWidget.content.length) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_controller.hasClients) return;
+        _controller.animateTo(
+          _controller.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+        );
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -704,7 +736,7 @@ class _ThoughtBlock extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         border: Border(
           left: BorderSide(
-            color: p.primary.withValues(alpha: active ? 0.85 : 0.45),
+            color: p.primary.withValues(alpha: widget.active ? 0.85 : 0.45),
             width: 2,
           ),
         ),
@@ -712,23 +744,63 @@ class _ThoughtBlock extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            active ? 'Thinking...' : 'Thoughts',
-            style: TextStyle(
-              color: p.primary,
-              fontSize: 11,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1.2,
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  widget.active ? 'Thinking...' : 'Thoughts',
+                  style: TextStyle(
+                    color: p.primary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: _collapsed ? 'Expand thoughts' : 'Minimize thoughts',
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints.tightFor(
+                  width: 28,
+                  height: 28,
+                ),
+                padding: EdgeInsets.zero,
+                onPressed: () => setState(() => _collapsed = !_collapsed),
+                icon: Icon(
+                  _collapsed ? LucideIcons.chevronDown : LucideIcons.chevronUp,
+                  size: 16,
+                  color: p.onSurfaceVariant,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            content,
-            style: TextStyle(
-              color: p.onSurfaceVariant,
-              fontSize: 12,
-              height: 1.45,
+          AnimatedCrossFade(
+            firstChild: const SizedBox.shrink(),
+            secondChild: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 180),
+                child: Scrollbar(
+                  controller: _controller,
+                  thumbVisibility: widget.content.length > 420,
+                  child: SingleChildScrollView(
+                    controller: _controller,
+                    child: SelectableText(
+                      widget.content,
+                      style: TextStyle(
+                        color: p.onSurfaceVariant,
+                        fontSize: 12,
+                        height: 1.45,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
+            crossFadeState: _collapsed
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            duration: const Duration(milliseconds: 160),
           ),
         ],
       ),
@@ -1287,7 +1359,7 @@ class _InputPod extends StatelessWidget {
           ),
           Divider(height: 1, color: p.outline),
           Padding(
-            padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 5),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -1299,14 +1371,14 @@ class _InputPod extends StatelessWidget {
                 Expanded(
                   child: Container(
                     constraints: BoxConstraints(
-                      minHeight: 38,
-                      maxHeight: compact ? 100 : 120,
+                      minHeight: 40,
+                      maxHeight: compact ? 68 : 96,
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
                     child: TextField(
                       controller: input,
                       minLines: 1,
-                      maxLines: compact ? 3 : 4,
+                      maxLines: compact ? 2 : 4,
                       style: TextStyle(
                         color: p.onSurface,
                         fontSize: 15,
@@ -1321,9 +1393,7 @@ class _InputPod extends StatelessWidget {
                         enabledBorder: InputBorder.none,
                         focusedBorder: InputBorder.none,
                         isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(
-                          vertical: 8,
-                        ),
+                        contentPadding: const EdgeInsets.symmetric(vertical: 7),
                       ),
                       onSubmitted: (_) => onSend(),
                     ),
@@ -1365,7 +1435,6 @@ class _InputPod extends StatelessWidget {
     );
   }
 }
-
 
 class _VoiceOverlay extends StatelessWidget {
   const _VoiceOverlay({
@@ -1410,18 +1479,7 @@ class _VoiceOverlay extends StatelessWidget {
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 430;
           final buttonSize = compact ? 42.0 : 48.0;
-          final activeLevel = math.max(level, outputLevel).clamp(0.0, 1.0);
-          final isOutput = outputLevel > level;
           final capsuleBaseWidth = compact ? 112.0 : 148.0;
-          final capsuleWidth = capsuleBaseWidth + activeLevel * 60;
-          final glowAlpha = (0.18 + activeLevel * 0.56).clamp(0.18, 0.74);
-          final blurAmount = 16.0 + activeLevel * 24;
-          final capsuleColor = isOutput
-              ? const Color(0xff8b5cf6)
-              : const Color(0xff2563eb);
-          final capsuleColorEnd = isOutput
-              ? const Color(0xffc084fc)
-              : const Color(0xff60a5fa);
           return Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -1448,78 +1506,14 @@ class _VoiceOverlay extends StatelessWidget {
                 const SizedBox(width: 8),
               ],
               SizedBox(width: compact ? 8 : 16),
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 120),
-                curve: Curves.easeOut,
-                width: capsuleWidth,
+              _LiveStatusCapsule(
+                width: capsuleBaseWidth,
                 height: 42,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(30),
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.black,
-                      capsuleColor.withValues(
-                        alpha: recording ? 0.96 : 0.72,
-                      ),
-                      capsuleColorEnd.withValues(
-                        alpha: recording ? 0.94 : 0.70,
-                      ),
-                    ],
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: capsuleColor.withValues(alpha: glowAlpha),
-                      blurRadius: blurAmount,
-                      spreadRadius: activeLevel * 4,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Center(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 100),
-                        width: 6 + activeLevel * 10,
-                        height: 6 + activeLevel * 10,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white.withValues(
-                            alpha: 0.5 + activeLevel * 0.5,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.white.withValues(
-                                alpha: activeLevel * 0.5,
-                              ),
-                              blurRadius: 8 + activeLevel * 8,
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        connecting
-                            ? 'Connecting...'
-                            : (status.trim().isEmpty
-                                  ? (recording
-                                      ? (isOutput ? 'Speaking...' : 'Listening...')
-                                      : 'Paused')
-                                  : status.trim()),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                recording: recording,
+                connecting: connecting,
+                level: level,
+                outputLevel: outputLevel,
+                status: status,
               ),
               const SizedBox(width: 16),
               RoundIconButton(
@@ -1625,7 +1619,9 @@ class _LiveVideoStage extends StatelessWidget {
                   _LiveVideoControls(
                     recording: app.isLiveRecording,
                     connecting: app.isLiveConnecting,
+                    status: app.liveStatus,
                     level: app.liveInputLevel,
+                    outputLevel: app.liveOutputLevel,
                     onVideo: app.toggleLiveVideo,
                     onRecording: () => unawaited(app.toggleLiveRecording()),
                     onClose: () => unawaited(app.stopLiveConversation()),
@@ -1704,7 +1700,9 @@ class _LiveVideoControls extends StatelessWidget {
   const _LiveVideoControls({
     required this.recording,
     required this.connecting,
+    required this.status,
     required this.level,
+    required this.outputLevel,
     required this.onVideo,
     required this.onRecording,
     required this.onClose,
@@ -1712,7 +1710,9 @@ class _LiveVideoControls extends StatelessWidget {
 
   final bool recording;
   final bool connecting;
+  final String status;
   final double level;
+  final double outputLevel;
   final VoidCallback onVideo;
   final VoidCallback onRecording;
   final VoidCallback onClose;
@@ -1724,7 +1724,7 @@ class _LiveVideoControls extends StatelessWidget {
         final compact = constraints.maxWidth < 430;
         final side = compact ? 50.0 : 58.0;
         final gap = compact ? 8.0 : 16.0;
-        final capsuleWidth = compact ? 104.0 : 150.0;
+        final capsuleWidth = compact ? 136.0 : 180.0;
         return Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -1742,12 +1742,14 @@ class _LiveVideoControls extends StatelessWidget {
               onPressed: () {},
             ),
             SizedBox(width: gap),
-            _LiveListeningCapsule(
+            _LiveStatusCapsule(
               width: capsuleWidth,
               height: side + 6,
               recording: recording,
               connecting: connecting,
               level: level,
+              outputLevel: outputLevel,
+              status: status,
             ),
             SizedBox(width: gap),
             _LiveCircleButton(
@@ -1774,13 +1776,15 @@ class _LiveVideoControls extends StatelessWidget {
   }
 }
 
-class _LiveListeningCapsule extends StatelessWidget {
-  const _LiveListeningCapsule({
+class _LiveStatusCapsule extends StatelessWidget {
+  const _LiveStatusCapsule({
     required this.width,
     required this.height,
     required this.recording,
     required this.connecting,
     required this.level,
+    required this.outputLevel,
+    required this.status,
   });
 
   final double width;
@@ -1788,13 +1792,33 @@ class _LiveListeningCapsule extends StatelessWidget {
   final bool recording;
   final bool connecting;
   final double level;
+  final double outputLevel;
+  final String status;
 
   @override
   Widget build(BuildContext context) {
-    final glow = (0.18 + level * 0.58).clamp(0.18, 0.76);
+    final activeLevel = math.max(level, outputLevel).clamp(0.0, 1.0);
+    final isOutput = outputLevel > level;
+    final capsuleWidth = width + activeLevel * 56;
+    final glowAlpha = (0.20 + activeLevel * 0.58).clamp(0.20, 0.78);
+    final blurAmount = 16.0 + activeLevel * 28;
+    final capsuleColor = isOutput
+        ? const Color(0xff8b5cf6)
+        : const Color(0xff2563eb);
+    final capsuleColorEnd = isOutput
+        ? const Color(0xffc084fc)
+        : const Color(0xff60a5fa);
+    final label = connecting
+        ? 'Connecting...'
+        : (isOutput
+              ? 'Speaking...'
+              : (status.trim().isEmpty
+                    ? (recording ? 'Listening...' : 'Paused')
+                    : status.trim()));
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 160),
-      width: width,
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOut,
+      width: capsuleWidth,
       height: height,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(height / 2),
@@ -1802,23 +1826,61 @@ class _LiveListeningCapsule extends StatelessWidget {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Colors.black.withValues(alpha: 0.92),
-            const Color(0xff1d4ed8).withValues(alpha: recording ? 0.94 : 0.56),
-            const Color(0xff7dd3fc).withValues(alpha: recording ? 0.92 : 0.48),
+            Colors.black.withValues(alpha: 0.96),
+            capsuleColor.withValues(alpha: recording || isOutput ? 0.96 : 0.68),
+            capsuleColorEnd.withValues(
+              alpha: recording || isOutput ? 0.94 : 0.66,
+            ),
           ],
         ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xff3b82f6).withValues(alpha: glow),
-            blurRadius: recording ? 28 : 14,
-            offset: const Offset(0, 10),
+            color: capsuleColor.withValues(alpha: glowAlpha),
+            blurRadius: blurAmount,
+            spreadRadius: activeLevel * 4,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
-      child: Icon(
-        connecting ? LucideIcons.loaderCircle : LucideIcons.audioLines,
-        color: Colors.white,
-        size: 28,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 100),
+                width: 5 + activeLevel * 10,
+                height: 5 + activeLevel * 10,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(
+                    alpha: 0.55 + activeLevel * 0.45,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.white.withValues(alpha: activeLevel * 0.52),
+                      blurRadius: 8 + activeLevel * 10,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

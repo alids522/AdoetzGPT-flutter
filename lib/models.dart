@@ -776,6 +776,8 @@ class PersistedAppState {
     required this.language,
     required this.theme,
     required this.selectedModel,
+    required this.isThinkingMode,
+    required this.isArtifactMode,
     required this.userName,
     required this.geminiApiKey,
     required this.endpoints,
@@ -795,6 +797,8 @@ class PersistedAppState {
   final AppLanguage language;
   final String theme;
   final String selectedModel;
+  final bool isThinkingMode;
+  final bool isArtifactMode;
   final String userName;
   final String geminiApiKey;
   final List<EndpointConfig> endpoints;
@@ -816,6 +820,8 @@ class PersistedAppState {
       language: AppLanguage.id,
       theme: 'dark',
       selectedModel: 'gemini-2.5-flash',
+      isThinkingMode: false,
+      isArtifactMode: false,
       userName: 'User',
       geminiApiKey: '',
       endpoints: const [
@@ -854,6 +860,8 @@ class PersistedAppState {
       language: normalizeLanguage(json['language']),
       theme: stringValue(json['theme'], 'dark') == 'light' ? 'light' : 'dark',
       selectedModel: stringValue(json['selectedModel'], defaults.selectedModel),
+      isThinkingMode: boolValue(json['isThinkingMode']),
+      isArtifactMode: boolValue(json['isArtifactMode']),
       userName: stringValue(json['userName'], defaults.userName),
       geminiApiKey: stringValue(json['geminiApiKey']),
       endpoints: mapList(
@@ -892,6 +900,8 @@ class PersistedAppState {
     'language': languageCode(language),
     'theme': theme,
     'selectedModel': selectedModel,
+    'isThinkingMode': isThinkingMode,
+    'isArtifactMode': isArtifactMode,
     'userName': userName,
     'geminiApiKey': includeSecrets ? geminiApiKey : '',
     'endpoints': endpoints

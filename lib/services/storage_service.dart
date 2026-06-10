@@ -55,6 +55,8 @@ class StorageService {
       language: state.language,
       theme: state.theme,
       selectedModel: state.selectedModel,
+      isThinkingMode: state.isThinkingMode,
+      isArtifactMode: state.isArtifactMode,
       userName: state.userName,
       geminiApiKey: state.geminiApiKey,
       endpoints: state.endpoints,

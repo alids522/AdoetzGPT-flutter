@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -153,6 +154,8 @@ class AdoetzAppState extends ChangeNotifier {
       language: language,
       theme: theme,
       selectedModel: selectedModel,
+      isThinkingMode: isThinkingMode,
+      isArtifactMode: isArtifactMode,
       userName: userName,
       geminiApiKey: geminiApiKey,
       endpoints: endpoints,
@@ -174,6 +177,8 @@ class AdoetzAppState extends ChangeNotifier {
     language = state.language;
     theme = state.theme;
     selectedModel = state.selectedModel;
+    isThinkingMode = state.isThinkingMode;
+    isArtifactMode = state.isArtifactMode;
     userName = state.userName;
     geminiApiKey = state.geminiApiKey;
     endpoints = state.endpoints.isEmpty ? endpoints : state.endpoints;
@@ -227,24 +232,34 @@ class AdoetzAppState extends ChangeNotifier {
       counterMap.putIfAbsent(counter.id, () => counter);
     }
 
+    final remoteIsNewer = (remote.savedAt ?? 0) >= (local.savedAt ?? 0);
+
     return PersistedAppState(
       currentUser: local.currentUser,
       authToken: local.authToken,
       syncSettings: local.syncSettings,
-      language: remote.language,
-      theme: remote.theme,
-      selectedModel: remote.selectedModel.isNotEmpty
+      language: remoteIsNewer ? remote.language : local.language,
+      theme: remoteIsNewer ? remote.theme : local.theme,
+      selectedModel: remoteIsNewer && remote.selectedModel.isNotEmpty
           ? remote.selectedModel
           : local.selectedModel,
-      userName: remote.userName.isNotEmpty ? remote.userName : local.userName,
-      geminiApiKey: remote.geminiApiKey.isNotEmpty
+      isThinkingMode: remoteIsNewer
+          ? remote.isThinkingMode
+          : local.isThinkingMode,
+      isArtifactMode: remoteIsNewer
+          ? remote.isArtifactMode
+          : local.isArtifactMode,
+      userName: remoteIsNewer && remote.userName.isNotEmpty
+          ? remote.userName
+          : local.userName,
+      geminiApiKey: remoteIsNewer && remote.geminiApiKey.isNotEmpty
           ? remote.geminiApiKey
           : local.geminiApiKey,
-      endpoints: remote.endpoints.isNotEmpty
+      endpoints: remoteIsNewer && remote.endpoints.isNotEmpty
           ? remote.endpoints
           : local.endpoints,
-      genSettings: remote.genSettings,
-      voiceSettings: remote.voiceSettings,
+      genSettings: remoteIsNewer ? remote.genSettings : local.genSettings,
+      voiceSettings: remoteIsNewer ? remote.voiceSettings : local.voiceSettings,
       sessions: mergedSessions,
       currentSessionId: mergedSessions.isNotEmpty
           ? mergedSessions.first.id
@@ -356,6 +371,8 @@ class AdoetzAppState extends ChangeNotifier {
     tokenUsageData = const [];
     customCounters = const [];
     selectedModel = 'gemini-2.5-flash';
+    isThinkingMode = false;
+    isArtifactMode = false;
     lastSyncAt = null;
   }
 
@@ -401,13 +418,13 @@ class AdoetzAppState extends ChangeNotifier {
   void toggleThinkingMode() {
     isThinkingMode = !isThinkingMode;
     notifyListeners();
-    unawaited(_persist());
+    unawaited(_persistAndScheduleRemote());
   }
 
   void toggleArtifactMode() {
     isArtifactMode = !isArtifactMode;
     notifyListeners();
-    unawaited(_persist());
+    unawaited(_persistAndScheduleRemote());
   }
 
   void setSelectedModel(String model) {
@@ -597,6 +614,15 @@ class AdoetzAppState extends ChangeNotifier {
     syncStatus = '';
     if (!session.temporary) _maybeSaveUserMemory(prompt);
     notifyListeners();
+    if (isFirstMessage) {
+      unawaited(
+        _generateSessionTitle(
+          sessionId: session.id,
+          message: prompt.trim(),
+          model: modelForRequest,
+        ),
+      );
+    }
 
     String pendingBotText = '';
     Timer? textFlushTimer;
@@ -653,15 +679,6 @@ class AdoetzAppState extends ChangeNotifier {
           totalTokens: response.inputTokens + response.outputTokens,
         ),
       ];
-      if (isFirstMessage) {
-        unawaited(
-          _generateSessionTitle(
-            sessionId: session.id,
-            message: prompt.trim(),
-            model: modelForRequest,
-          ),
-        );
-      }
     } catch (error) {
       _updateBotMessage(
         session.id,
@@ -1116,13 +1133,10 @@ class AdoetzAppState extends ChangeNotifier {
     }
 
     final firstUserSpeech = isUser && session.messages.isEmpty;
-    final finishedFirstUserSpeech =
-        isUser &&
-        finished &&
-        session.messages.where((m) => m.isUser).length <= 1;
     final title = firstUserSpeech
         ? cleanTitle(clean).split(RegExp(r'\s+')).take(4).join(' ')
         : session.title;
+
     _replaceSession(
       session.id,
       session.copyWith(
@@ -1132,6 +1146,11 @@ class AdoetzAppState extends ChangeNotifier {
       ),
     );
     notifyListeners();
+
+    final finishedFirstUserSpeech =
+        isUser &&
+        finished &&
+        session.messages.where((m) => m.isUser).length <= 1;
     if (finishedFirstUserSpeech) {
       unawaited(
         _generateSessionTitle(
@@ -1247,7 +1266,7 @@ class AdoetzAppState extends ChangeNotifier {
   void _pulseLiveOutput() {
     liveOutputLevel = 0.82;
     _liveOutputPulseTimer?.cancel();
-    _liveOutputPulseTimer = Timer(const Duration(milliseconds: 280), () {
+    _liveOutputPulseTimer = Timer(const Duration(milliseconds: 1100), () {
       liveOutputLevel = 0;
       notifyListeners();
     });
@@ -1322,14 +1341,9 @@ class AdoetzAppState extends ChangeNotifier {
         !syncSettings.enabled) {
       return;
     }
-    final stateHash =
-        sessions
-            .map((session) => '${session.id}:${session.updatedAt}')
-            .join('|') +
-        memories.length.toString() +
-        selectedModel +
-        userName +
-        geminiApiKey;
+    final hashState = buildState().toJson(includeSecrets: true)
+      ..remove('savedAt');
+    final stateHash = jsonEncode(hashState);
     if (stateHash == lastPushedHash) return;
     _remoteSyncTimer?.cancel();
     _remoteSyncTimer = Timer(const Duration(seconds: 15), () async {
