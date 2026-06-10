@@ -313,7 +313,7 @@ ThemeData buildTheme(
       foregroundColor: p.onSurface,
     ),
     drawerTheme: DrawerThemeData(
-      backgroundColor: p.surface,
+      backgroundColor: p.isClassic ? p.background : p.surface,
       scrimColor: Colors.black.withValues(alpha: p.isAurora ? 0.72 : 0.60),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.horizontal(
