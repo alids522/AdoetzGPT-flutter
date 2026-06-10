@@ -34,16 +34,29 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   String? editingId;
   final editController = TextEditingController();
 
+  bool _showScrollToBottom = false;
+
   @override
   void initState() {
     super.initState();
     input.addListener(_rebuildForInput);
+    scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (!scrollController.hasClients) return;
+    final show = scrollController.offset <
+        scrollController.position.maxScrollExtent - 150;
+    if (show != _showScrollToBottom) {
+      setState(() => _showScrollToBottom = show);
+    }
   }
 
   @override
   void dispose() {
     input.removeListener(_rebuildForInput);
     input.dispose();
+    scrollController.removeListener(_onScroll);
     scrollController.dispose();
     editController.dispose();
     super.dispose();
@@ -78,6 +91,28 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   onEditSave: _saveEdit,
                 ),
         ),
+
+        if (_showScrollToBottom)
+          Positioned(
+            right: 20,
+            bottom: 100,
+            child: FloatingActionButton.small(
+              backgroundColor: p.surface,
+              elevation: 4,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+                side: BorderSide(color: p.outline),
+              ),
+              onPressed: () {
+                scrollController.animateTo(
+                  scrollController.position.maxScrollExtent,
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOut,
+                );
+              },
+              child: Icon(LucideIcons.arrowDown, color: p.onSurface, size: 20),
+            ),
+          ),
 
         Positioned(
           left: 0,
