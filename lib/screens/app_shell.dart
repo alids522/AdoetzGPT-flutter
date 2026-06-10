@@ -658,7 +658,8 @@ class _AppDrawerState extends State<_AppDrawer> {
           right: Radius.circular(p.sidebarRadius),
         ),
       ),
-      backgroundColor: p.surface,
+      backgroundColor:
+          p.isClassic ? (p.isDark ? Colors.black : Colors.white) : p.surface,
       child: SafeArea(
         child: Column(
           children: [
