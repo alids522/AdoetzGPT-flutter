@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - master
+      - 1.1-add-audio-animation-etc
   workflow_dispatch:
 
 jobs:
