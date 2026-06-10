@@ -848,9 +848,44 @@ class _AppDrawerState extends State<_AppDrawer> {
                 ),
               ),
             ),
-          ],
-        ),
-      ),
+            ],
+          ),
+        );
+
+        if (p.isClassic || p.glassBlur <= 0) {
+          return Container(
+            color: p.isClassic ? null : p.surface,
+            child: inner,
+          );
+        }
+
+        return BackdropFilter(
+          filter: ui.ImageFilter.blur(
+            sigmaX: p.glassBlur,
+            sigmaY: p.glassBlur,
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              color: p.surface,
+              border: Border(
+                right: BorderSide(
+                  color: p.outline.withValues(alpha: 0.5),
+                ),
+              ),
+              gradient: p.isLiquidGlass ? LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.white.withValues(alpha: p.isDark ? 0.12 : 0.6),
+                  p.surface,
+                  p.surface.withValues(alpha: p.isDark ? 0.02 : 0.2),
+                ],
+              ) : null,
+            ),
+            child: inner,
+          ),
+        );
+      }),
     );
   }
 
