@@ -775,6 +775,7 @@ class PersistedAppState {
     required this.syncSettings,
     required this.language,
     required this.theme,
+    required this.visualTheme,
     required this.selectedModel,
     required this.isThinkingMode,
     required this.isArtifactMode,
@@ -799,6 +800,7 @@ class PersistedAppState {
   final SyncSettings syncSettings;
   final AppLanguage language;
   final String theme;
+  final String visualTheme;
   final String selectedModel;
   final bool isThinkingMode;
   final bool isArtifactMode;
@@ -825,6 +827,7 @@ class PersistedAppState {
       syncSettings: const SyncSettings(),
       language: AppLanguage.id,
       theme: 'dark',
+      visualTheme: 'default',
       selectedModel: 'gemini-2.5-flash',
       isThinkingMode: false,
       isArtifactMode: false,
@@ -868,6 +871,7 @@ class PersistedAppState {
       ),
       language: normalizeLanguage(json['language']),
       theme: stringValue(json['theme'], 'dark') == 'light' ? 'light' : 'dark',
+      visualTheme: _normalizeVisualTheme(json['visualTheme']),
       selectedModel: stringValue(json['selectedModel'], defaults.selectedModel),
       isThinkingMode: boolValue(json['isThinkingMode']),
       isArtifactMode: boolValue(json['isArtifactMode']),
@@ -911,6 +915,7 @@ class PersistedAppState {
     'syncSettings': syncSettings.toJson(includePassword: includeSecrets),
     'language': languageCode(language),
     'theme': theme,
+    'visualTheme': visualTheme,
     'selectedModel': selectedModel,
     'isThinkingMode': isThinkingMode,
     'isArtifactMode': isArtifactMode,
@@ -940,6 +945,16 @@ class PersistedAppState {
 
   String encode({bool includeSecrets = true}) =>
       jsonEncode(toJson(includeSecrets: includeSecrets));
+}
+
+String _normalizeVisualTheme(Object? value) {
+  final key = stringValue(value, 'default').trim().toLowerCase();
+  return switch (key) {
+    'liquid-glass' || 'liquidglass' || 'glass' => 'liquid-glass',
+    'aurora-neon' || 'auroraneon' || 'aurora' || 'neon' => 'aurora-neon',
+    'modern-minimal' || 'modernminimal' || 'minimal' => 'modern-minimal',
+    _ => 'default',
+  };
 }
 
 extension _ListFallback<T> on List<T> {

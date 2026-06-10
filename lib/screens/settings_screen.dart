@@ -178,6 +178,9 @@ class _ExperienceSection extends StatelessWidget {
               style: TextStyle(color: p.onSurfaceVariant, fontSize: 12),
             ),
           ),
+          const SizedBox(height: 14),
+          const _ThemeSelector(),
+          const SizedBox(height: 14),
           SwitchListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
@@ -261,6 +264,165 @@ class _MemorySection extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _ThemeSelector extends StatelessWidget {
+  const _ThemeSelector();
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('THEME STYLE', style: _labelStyle(context)),
+        const SizedBox(height: 10),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final twoColumns = constraints.maxWidth > 560;
+            return Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: appVisualThemeOptions.map((option) {
+                final selected = app.visualTheme == option.key;
+                final width = twoColumns
+                    ? (constraints.maxWidth - 10) / 2
+                    : constraints.maxWidth;
+                return SizedBox(
+                  width: width,
+                  child: _ThemeOptionTile(
+                    option: option,
+                    selected: selected,
+                    palette: p,
+                    onTap: () => app.setVisualTheme(option.key),
+                  ),
+                );
+              }).toList(),
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _ThemeOptionTile extends StatefulWidget {
+  const _ThemeOptionTile({
+    required this.option,
+    required this.selected,
+    required this.palette,
+    required this.onTap,
+  });
+
+  final AppVisualThemeOption option;
+  final bool selected;
+  final AppPalette palette;
+  final VoidCallback onTap;
+
+  @override
+  State<_ThemeOptionTile> createState() => _ThemeOptionTileState();
+}
+
+class _ThemeOptionTileState extends State<_ThemeOptionTile> {
+  bool hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.palette;
+    final reducedMotion =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final active = widget.selected || hovered;
+    return MouseRegion(
+      onEnter: (_) => setState(() => hovered = true),
+      onExit: (_) => setState(() => hovered = false),
+      child: AnimatedScale(
+        scale: reducedMotion ? 1 : (hovered ? 1.015 : 1),
+        duration: Duration(milliseconds: reducedMotion ? 1 : 140),
+        curve: Curves.easeOutCubic,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(p.cardRadius),
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: Duration(milliseconds: reducedMotion ? 1 : 180),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: widget.selected
+                  ? p.primary.withValues(alpha: p.isAurora ? 0.18 : 0.12)
+                  : p.surfaceDim,
+              borderRadius: BorderRadius.circular(p.cardRadius),
+              border: Border.all(
+                color: widget.selected ? p.primary : p.outline,
+                width: widget.selected ? 1.2 : 1,
+              ),
+              boxShadow: active
+                  ? [
+                      BoxShadow(
+                        color: (widget.selected ? p.primary : p.glow)
+                            .withValues(alpha: p.isAurora ? 0.26 : 0.14),
+                        blurRadius: p.isMinimal ? 14 : 22,
+                        offset: const Offset(0, 10),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: p.primary.withValues(alpha: 0.12),
+                    border: Border.all(
+                      color: widget.selected ? p.primary : p.outline,
+                    ),
+                  ),
+                  child: Icon(widget.option.icon, size: 18, color: p.primary),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.option.label,
+                        style: TextStyle(
+                          color: p.onSurface,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        widget.option.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: p.onSurfaceVariant,
+                          fontSize: 11,
+                          height: 1.25,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                AnimatedOpacity(
+                  opacity: widget.selected ? 1 : 0,
+                  duration: Duration(milliseconds: reducedMotion ? 1 : 120),
+                  child: Icon(LucideIcons.check, size: 18, color: p.primary),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -814,7 +976,10 @@ class _EndpointSection extends StatelessWidget {
                                 },
                               ),
                             ),
-                            icon: const Icon(LucideIcons.cloudDownload, size: 16),
+                            icon: const Icon(
+                              LucideIcons.cloudDownload,
+                              size: 16,
+                            ),
                             label: const Text('Fetch'),
                           ),
                         ),
@@ -1372,9 +1537,7 @@ class _ModelSelectionDialogState extends State<_ModelSelectionDialog> {
 
     final filteredModels =
         _availableModels
-            ?.where(
-              (m) => m.toLowerCase().contains(_searchQuery.toLowerCase()),
-            )
+            ?.where((m) => m.toLowerCase().contains(_searchQuery.toLowerCase()))
             .toList() ??
         [];
 
@@ -1446,7 +1609,10 @@ class _ModelSelectionDialogState extends State<_ModelSelectionDialog> {
                         itemBuilder: (context, index) {
                           final model = filteredModels[index];
                           return CheckboxListTile(
-                            title: Text(model, style: const TextStyle(fontSize: 14)),
+                            title: Text(
+                              model,
+                              style: const TextStyle(fontSize: 14),
+                            ),
                             value: _selectedModels.contains(model),
                             onChanged: (selected) {
                               setState(() {
@@ -1483,4 +1649,3 @@ class _ModelSelectionDialogState extends State<_ModelSelectionDialog> {
     );
   }
 }
-

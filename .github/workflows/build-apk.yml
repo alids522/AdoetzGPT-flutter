@@ -6,6 +6,7 @@ on:
       - main
       - master
       - 1.1-add-audio-animation-etc
+      - 1.2-add-new-theme
   workflow_dispatch:
 
 jobs:

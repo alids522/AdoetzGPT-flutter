@@ -54,6 +54,7 @@ class StorageService {
       syncSettings: state.syncSettings,
       language: state.language,
       theme: state.theme,
+      visualTheme: state.visualTheme,
       selectedModel: state.selectedModel,
       isThinkingMode: state.isThinkingMode,
       isArtifactMode: state.isArtifactMode,

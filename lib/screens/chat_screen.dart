@@ -83,7 +83,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       children: [
         Positioned.fill(
           child: session.messages.isEmpty
-              ? _EmptyState(onPrompt: (text) => input.text = text)
+              ? const _EmptyState()
               : _MessageList(
                   controller: scrollController,
                   editingId: editingId,
@@ -97,7 +97,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         if (_showScrollToBottom)
           Positioned(
             right: 20,
-            bottom: 118,
+            bottom: MediaQuery.of(context).padding.bottom + 168,
             child: FloatingActionButton.small(
               backgroundColor: p.surface,
               elevation: 4,
@@ -157,10 +157,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 600),
                         reverseDuration: const Duration(milliseconds: 400),
-                        switchInCurve: Curves.easeOutBack, // Mimics spring stiffness 400 damping 15
+                        switchInCurve: Curves
+                            .easeOutBack, // Mimics spring stiffness 400 damping 15
                         switchOutCurve: Curves.easeIn,
                         transitionBuilder: (child, animation) {
-                          final isIncoming = child.key ==
+                          final isIncoming =
+                              child.key ==
                               (app.isLiveActive || app.isLiveConnecting
                                   ? const ValueKey('voice-overlay')
                                   : const ValueKey('input-pod'));
@@ -169,8 +171,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                             animation: animation,
                             builder: (context, childWidget) {
                               final offsetY = isIncoming
-                                  ? Tween<double>(begin: 80.0, end: 0.0).evaluate(animation)
-                                  : Tween<double>(begin: -80.0, end: 0.0).evaluate(animation);
+                                  ? Tween<double>(
+                                      begin: 80.0,
+                                      end: 0.0,
+                                    ).evaluate(animation)
+                                  : Tween<double>(
+                                      begin: -80.0,
+                                      end: 0.0,
+                                    ).evaluate(animation);
                               return Transform.translate(
                                 offset: Offset(0, offsetY),
                                 child: Opacity(
@@ -252,32 +260,42 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _AttachAction(
-                icon: LucideIcons.image,
-                label: 'Photo',
-                onTap: () => _pickFiles(FileType.image),
-              ),
-              _AttachAction(
-                icon: LucideIcons.video,
-                label: 'Video',
-                onTap: () => _pickFiles(FileType.video),
-              ),
-              _AttachAction(
-                icon: LucideIcons.fileText,
-                label: 'File',
-                onTap: () => _pickFiles(FileType.custom),
-              ),
-              _AttachAction(
-                icon: LucideIcons.camera,
-                label: 'Camera',
-                onTap: _captureImage,
-              ),
-            ],
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 0, end: 1),
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutBack,
+          builder: (context, value, child) => Transform.scale(
+            scale: 0.94 + value * 0.06,
+            alignment: Alignment.bottomCenter,
+            child: Opacity(opacity: value.clamp(0.0, 1.0), child: child),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _AttachAction(
+                  icon: LucideIcons.image,
+                  label: 'Photo',
+                  onTap: () => _pickFiles(FileType.image),
+                ),
+                _AttachAction(
+                  icon: LucideIcons.video,
+                  label: 'Video',
+                  onTap: () => _pickFiles(FileType.video),
+                ),
+                _AttachAction(
+                  icon: LucideIcons.fileText,
+                  label: 'File',
+                  onTap: () => _pickFiles(FileType.custom),
+                ),
+                _AttachAction(
+                  icon: LucideIcons.camera,
+                  label: 'Camera',
+                  onTap: _captureImage,
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -369,9 +387,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.onPrompt});
-
-  final ValueChanged<String> onPrompt;
+  const _EmptyState();
 
   @override
   Widget build(BuildContext context) {
@@ -379,22 +395,13 @@ class _EmptyState extends StatelessWidget {
     final p = AppPalette.fromBrightness(
       Theme.of(context).brightness == Brightness.dark,
     );
-    final prompts = [
-      (
-        app.language == AppLanguage.en
-            ? 'Explain a concept'
-            : 'Jelaskan konsep',
-        'Explain quantum computing in simple terms',
-      ),
-      (
-        app.language == AppLanguage.en ? 'Write code' : 'Tulis kode',
-        'Write a Flutter widget for a glass card',
-      ),
-      (
-        app.language == AppLanguage.en ? 'Generate image' : 'Hasilkan gambar',
-        '/generate-image: A futuristic city floating in the sky, digital art',
-      ),
-    ];
+    final name = app.userName.trim().isEmpty ? 'there' : app.userName.trim();
+    final greeting = app.language == AppLanguage.en
+        ? 'Good to see you, $name.'
+        : 'Senang bertemu lagi, $name.';
+    final subtitle = app.language == AppLanguage.en
+        ? 'I am ready when you are.'
+        : 'Aku siap kapan pun kamu mau mulai.';
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 40, 24, 220),
       children: [
@@ -424,56 +431,27 @@ class _EmptyState extends StatelessWidget {
         const SizedBox(height: 28),
         Center(
           child: Text(
-            'AdoetzGPT',
+            greeting,
+            textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 34,
+              fontSize: 28,
               color: p.onSurface,
-              fontWeight: FontWeight.w300,
+              fontWeight: FontWeight.w700,
               letterSpacing: -0.5,
             ),
           ),
         ),
-        const SizedBox(height: 34),
-        Wrap(
-          alignment: WrapAlignment.center,
-          spacing: 12,
-          runSpacing: 12,
-          children: prompts.map((item) {
-            return InkWell(
-              borderRadius: BorderRadius.circular(18),
-              onTap: () => onPrompt(item.$2),
-              child: Container(
-                width: 210,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: p.surface,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: p.outline),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      item.$1.contains('image') || item.$1.contains('gambar')
-                          ? LucideIcons.image
-                          : LucideIcons.sparkles,
-                      color: p.primary,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        item.$1,
-                        style: TextStyle(
-                          color: p.onSurface,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }).toList(),
+        const SizedBox(height: 12),
+        Center(
+          child: Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 16,
+              color: p.onSurfaceVariant,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
         ),
       ],
     );
@@ -663,14 +641,14 @@ class _MessageBubble extends StatelessWidget {
                         )
                       else if (parsed.mainContent.isEmpty && app.isGenerating)
                         const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 4,
+                          ),
                           child: _PolygonProgressionLoading(),
                         )
                       else
-                        _MarkdownMessage(
-                          data: parsed.mainContent,
-                          palette: p,
-                        ),
+                        _MarkdownMessage(data: parsed.mainContent, palette: p),
                     ],
                   ),
           ),
@@ -1038,40 +1016,42 @@ class _PolygonProgressionLoading extends StatefulWidget {
   const _PolygonProgressionLoading();
 
   @override
-  State<_PolygonProgressionLoading> createState() => _PolygonProgressionLoadingState();
+  State<_PolygonProgressionLoading> createState() =>
+      _PolygonProgressionLoadingState();
 }
 
-class _PolygonProgressionLoadingState extends State<_PolygonProgressionLoading> with SingleTickerProviderStateMixin {
+class _PolygonProgressionLoadingState extends State<_PolygonProgressionLoading>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  
+
   static const double _dotSize = 6.0;
   static const double _dist = 16.0;
-  
+
   static const List<List<double>> _xs = [
     [0, -1, 0, -0.8, 0, 0, 0],
     [0, 1, 0.866, 0.8, 0.951, 0.866, 0],
     [0, 0, -0.866, 0.8, 0.588, 0.866, 0],
     [0, 0, 0, -0.8, -0.588, 0, 0],
     [0, 0, 0, 0, -0.951, -0.866, 0],
-    [0, 0, 0, 0, 0, -0.866, 0]
+    [0, 0, 0, 0, 0, -0.866, 0],
   ];
-  
+
   static const List<List<double>> _ys = [
     [0, 0, -1, -0.8, -1, -1, 0],
     [0, 0, 0.5, -0.8, -0.309, -0.5, 0],
     [0, 0, 0.5, 0.8, 0.809, 0.5, 0],
     [0, 0, 0, 0.8, 0.809, 1, 0],
     [0, 0, 0, 0, -0.309, -0.5, 0],
-    [0, 0, 0, 0, 0, 0.5, 0]
+    [0, 0, 0, 0, 0, 0.5, 0],
   ];
-  
+
   static const List<List<double>> _ss = [
     [1, 1, 1, 1, 1, 1, 1],
     [0, 1, 1, 1, 1, 1, 0],
     [0, 0, 1, 1, 1, 1, 0],
     [0, 0, 0, 1, 1, 1, 0],
     [0, 0, 0, 0, 1, 1, 0],
-    [0, 0, 0, 0, 0, 1, 0]
+    [0, 0, 0, 0, 0, 1, 0],
   ];
 
   late final List<Animation<double>> _xAnims;
@@ -1086,9 +1066,27 @@ class _PolygonProgressionLoadingState extends State<_PolygonProgressionLoading> 
       duration: const Duration(milliseconds: 4670),
     )..repeat();
 
-    _xAnims = List.generate(6, (i) => _createTween(_xs[i], true).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)));
-    _yAnims = List.generate(6, (i) => _createTween(_ys[i], true).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)));
-    _sAnims = List.generate(6, (i) => _createTween(_ss[i], false).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)));
+    _xAnims = List.generate(
+      6,
+      (i) => _createTween(
+        _xs[i],
+        true,
+      ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)),
+    );
+    _yAnims = List.generate(
+      6,
+      (i) => _createTween(
+        _ys[i],
+        true,
+      ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)),
+    );
+    _sAnims = List.generate(
+      6,
+      (i) => _createTween(
+        _ss[i],
+        false,
+      ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)),
+    );
   }
 
   TweenSequence<double> _createTween(List<double> values, bool multiplyDist) {
@@ -1442,6 +1440,14 @@ class _InputPod extends StatelessWidget {
     final contextMax = contextWindow(app.selectedModel);
     final liveTokens = historyTokens + countTokens(input.text);
     final compact = MediaQuery.of(context).size.width < 560;
+    final contextRatio = (liveTokens / contextMax).clamp(0.0, 1.0).toDouble();
+    final contextColor =
+        Color.lerp(
+          p.isDark ? Colors.white : const Color(0xff475569),
+          p.error,
+          math.pow(contextRatio, 1.35).toDouble(),
+        ) ??
+        p.error;
     return Container(
       decoration: BoxDecoration(
         color: p.isDark
@@ -1497,17 +1503,20 @@ class _InputPod extends StatelessWidget {
                   onPressed: app.toggleArtifactMode,
                 ),
                 const SizedBox(width: 12),
-                Expanded(
+                if (app.currentSession.temporary && !compact) ...[
+                  _TemporaryComposerPill(palette: p),
+                  const SizedBox(width: 10),
+                ],
+                SizedBox(
+                  width: compact ? 74 : 132,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(4),
                     child: SizedBox(
                       height: 4,
                       child: LinearProgressIndicator(
-                        value: (liveTokens / contextMax).clamp(0.0, 1.0),
+                        value: contextRatio,
                         backgroundColor: p.onSurface.withValues(alpha: 0.08),
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          p.onSurfaceVariant.withValues(alpha: 0.5),
-                        ),
+                        valueColor: AlwaysStoppedAnimation<Color>(contextColor),
                       ),
                     ),
                   ),
@@ -1602,6 +1611,42 @@ class _InputPod extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TemporaryComposerPill extends StatelessWidget {
+  const _TemporaryComposerPill({required this.palette});
+
+  final AppPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 26,
+      padding: const EdgeInsets.symmetric(horizontal: 9),
+      decoration: BoxDecoration(
+        color: const Color(0xffa78bfa).withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: const Color(0xffa78bfa).withValues(alpha: 0.30),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(LucideIcons.shieldOff, size: 13, color: Color(0xffa78bfa)),
+          const SizedBox(width: 5),
+          Text(
+            'Temporary',
+            style: TextStyle(
+              color: palette.onSurface.withValues(alpha: 0.78),
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
             ),
           ),
         ],

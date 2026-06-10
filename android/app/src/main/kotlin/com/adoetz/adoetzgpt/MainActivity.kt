@@ -2,6 +2,8 @@ package com.adoetz.adoetzgpt2
 
 import android.content.Intent
 import android.os.Build
+import android.content.Context
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
@@ -16,6 +18,7 @@ class MainActivity : FlutterActivity() {
     private val liveForegroundChannel = "adoetzgpt/live_foreground"
     private var audioTrack: AudioTrack? = null
     private var audioExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private var previousAudioMode: Int? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -75,19 +78,32 @@ class MainActivity : FlutterActivity() {
         if (audioExecutor.isShutdown) {
             audioExecutor = Executors.newSingleThreadExecutor()
         }
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        if (previousAudioMode == null) {
+            previousAudioMode = audioManager.mode
+        }
+        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
         val minBuffer = AudioTrack.getMinBufferSize(
             sampleRate,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT
         )
         val bufferSize = maxOf(minBuffer, sampleRate * 2)
+        val attributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+        val format = AudioFormat.Builder()
+            .setSampleRate(sampleRate)
+            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .build()
         audioTrack = AudioTrack(
-            AudioManager.STREAM_MUSIC,
-            sampleRate,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
+            attributes,
+            format,
             bufferSize,
-            AudioTrack.MODE_STREAM
+            AudioTrack.MODE_STREAM,
+            AudioManager.AUDIO_SESSION_ID_GENERATE
         )
         audioTrack?.play()
     }
@@ -101,6 +117,9 @@ class MainActivity : FlutterActivity() {
             track?.release()
         } catch (_: Exception) {
         }
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        previousAudioMode?.let { audioManager.mode = it }
+        previousAudioMode = null
     }
 
     override fun onDestroy() {

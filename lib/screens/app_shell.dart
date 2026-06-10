@@ -44,16 +44,19 @@ class _AppShellState extends State<AppShell> {
           return;
         }
         if (context.read<AdoetzAppState>().handleSystemBack()) return;
-        
+
         final now = DateTime.now();
-        if (_lastBackPressTime == null || now.difference(_lastBackPressTime!) > const Duration(seconds: 2)) {
+        if (_lastBackPressTime == null ||
+            now.difference(_lastBackPressTime!) > const Duration(seconds: 2)) {
           _lastBackPressTime = now;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: const Text('Press back again to exit app'),
               duration: const Duration(seconds: 2),
               behavior: SnackBarBehavior.floating,
-              backgroundColor: p.isDark ? const Color(0xff333333) : const Color(0xff555555),
+              backgroundColor: p.isDark
+                  ? const Color(0xff333333)
+                  : const Color(0xff555555),
             ),
           );
           return;
@@ -69,12 +72,27 @@ class _AppShellState extends State<AppShell> {
           bottom: false,
           child: Stack(
             children: [
+              const Positioned.fill(child: ThemedBackdrop()),
               Positioned.fill(
-                child: switch (app.currentView) {
-                  AppView.chat => const ChatScreen(),
-                  AppView.settings => const SettingsScreen(),
-                  AppView.tokenUsage => const TokenUsageScreen(),
-                },
+                child: AnimatedSwitcher(
+                  duration: Duration(
+                    milliseconds:
+                        (MediaQuery.maybeOf(context)?.disableAnimations ??
+                            false)
+                        ? 1
+                        : 220,
+                  ),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  child: KeyedSubtree(
+                    key: ValueKey(app.currentView),
+                    child: switch (app.currentView) {
+                      AppView.chat => const ChatScreen(),
+                      AppView.settings => const SettingsScreen(),
+                      AppView.tokenUsage => const TokenUsageScreen(),
+                    },
+                  ),
+                ),
               ),
               if (showHeader)
                 Positioned(
@@ -206,20 +224,24 @@ class _HeaderState extends State<_Header> {
             ),
             const Spacer(),
           ],
-          const SizedBox(width: 8),
-          if (app.syncSettings.enabled && app.syncStatus.isNotEmpty)
-            Flexible(
-              child: Text(
-                app.syncStatus,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 10,
-                  color: p.onSurfaceVariant,
-                  fontWeight: FontWeight.w700,
-                ),
+          if (app.currentView == AppView.chat) ...[
+            const Spacer(),
+            if (app.currentSession.temporary) ...[
+              _TemporaryHeaderPill(palette: p),
+              const SizedBox(width: 8),
+            ],
+          ],
+          if (app.syncSettings.enabled && app.syncStatus.isNotEmpty) ...[
+            Tooltip(
+              message: app.syncStatus,
+              child: Icon(
+                LucideIcons.database,
+                size: 16,
+                color: p.onSurfaceVariant.withValues(alpha: 0.72),
               ),
             ),
+            const SizedBox(width: 8),
+          ],
           RoundIconButton(
             icon: app.currentSession.messages.isEmpty
                 ? LucideIcons.sparkles
@@ -316,6 +338,43 @@ class _HeaderState extends State<_Header> {
   }
 }
 
+class _TemporaryHeaderPill extends StatelessWidget {
+  const _TemporaryHeaderPill({required this.palette});
+
+  final AppPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 30,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xffa78bfa).withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: const Color(0xffa78bfa).withValues(alpha: 0.34),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(LucideIcons.shieldOff, size: 14, color: Color(0xffa78bfa)),
+          const SizedBox(width: 6),
+          Text(
+            'TEMP',
+            style: TextStyle(
+              color: palette.onSurface.withValues(alpha: 0.82),
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ModelDropdown extends StatefulWidget {
   const _ModelDropdown({
     required this.minWidth,
@@ -345,182 +404,194 @@ class _ModelDropdownState extends State<_ModelDropdown> {
     final models = app.models
         .where((model) => model.toLowerCase().contains(query.toLowerCase()))
         .toList();
-    return Material(
-      color: Colors.transparent,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          minWidth: math.min(widget.minWidth, 330),
-          maxHeight: widget.maxHeight,
-        ),
-        child: Container(
-          decoration: BoxDecoration(
-            color: p.isDark ? const Color(0xff111111) : Colors.white,
-            borderRadius: BorderRadius.circular(widget.compact ? 18 : 22),
-            border: Border.all(color: p.outline),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: p.isDark ? 0.38 : 0.16),
-                blurRadius: 28,
-                offset: const Offset(0, 18),
-              ),
-            ],
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutBack,
+      builder: (context, value, child) => Transform.scale(
+        scale: 0.96 + value * 0.04,
+        alignment: Alignment.topLeft,
+        child: Opacity(opacity: value.clamp(0.0, 1.0), child: child),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minWidth: math.min(widget.minWidth, 330),
+            maxHeight: widget.maxHeight,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                  14,
-                  widget.compact ? 10 : 12,
-                  8,
-                  widget.compact ? 6 : 10,
+          child: Container(
+            decoration: BoxDecoration(
+              color: p.isDark ? const Color(0xff111111) : Colors.white,
+              borderRadius: BorderRadius.circular(widget.compact ? 18 : 22),
+              border: Border.all(color: p.outline),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: p.isDark ? 0.38 : 0.16),
+                  blurRadius: 28,
+                  offset: const Offset(0, 18),
                 ),
-                child: Row(
-                  children: [
-                    Icon(LucideIcons.bot, size: 16, color: p.primary),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Model Selection',
-                        style: TextStyle(
-                          color: p.onSurface,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0.4,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Fetch models',
-                      onPressed: app.isFetchingModels
-                          ? null
-                          : () => unawaited(app.fetchModels()),
-                      icon: app.isFetchingModels
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(LucideIcons.refreshCw, size: 16),
-                    ),
-                    IconButton(
-                      tooltip: 'Close',
-                      onPressed: widget.onClose,
-                      icon: const Icon(LucideIcons.x, size: 16),
-                    ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                  14,
-                  0,
-                  14,
-                  widget.compact ? 8 : 12,
-                ),
-                child: TextField(
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(LucideIcons.search, size: 16),
-                    hintText: app.language == AppLanguage.en
-                        ? 'Search models...'
-                        : 'Cari model...',
-                    isDense: true,
-                  ),
-                  onChanged: (value) => setState(() => query = value),
-                ),
-              ),
-              if (app.modelFetchStatus.isNotEmpty)
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      app.modelFetchStatus,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color:
-                            app.modelFetchStatus.toLowerCase().contains(
-                              'failed',
-                            )
-                            ? p.error
-                            : p.onSurfaceVariant,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
+                  padding: EdgeInsets.fromLTRB(
+                    14,
+                    widget.compact ? 10 : 12,
+                    8,
+                    widget.compact ? 6 : 10,
                   ),
-                ),
-              Flexible(
-                child: models.isEmpty
-                    ? Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+                  child: Row(
+                    children: [
+                      Icon(LucideIcons.bot, size: 16, color: p.primary),
+                      const SizedBox(width: 8),
+                      Expanded(
                         child: Text(
-                          app.isFetchingModels
-                              ? 'Fetching models...'
-                              : 'No models match your search.',
+                          'Model Selection',
                           style: TextStyle(
-                            color: p.onSurfaceVariant,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
+                            color: p.onSurface,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.4,
                           ),
                         ),
-                      )
-                    : ListView.separated(
-                        shrinkWrap: true,
-                        padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
-                        itemCount: models.length,
-                        separatorBuilder: (_, _) =>
-                            Divider(height: 1, color: p.outline),
-                        itemBuilder: (context, index) {
-                          final model = models[index];
-                          final selected = model == app.selectedModel;
-                          final endpointLabel = _endpointLabel(app, model);
-                          return ListTile(
-                            dense: true,
-                            minVerticalPadding: widget.compact ? 7 : 10,
-                            visualDensity: widget.compact
-                                ? VisualDensity.compact
-                                : VisualDensity.standard,
-                            title: Text(
-                              model,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: selected
-                                    ? p.onSurface
-                                    : p.onSurface.withValues(alpha: 0.78),
-                                fontWeight: selected
-                                    ? FontWeight.w900
-                                    : FontWeight.w600,
-                              ),
-                            ),
-                            subtitle: Text(
-                              endpointLabel,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: p.onSurfaceVariant,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            trailing: selected
-                                ? Icon(
-                                    LucideIcons.check,
-                                    color: p.primary,
-                                    size: 18,
-                                  )
-                                : null,
-                            onTap: () {
-                              app.setSelectedModel(model);
-                              widget.onClose();
-                            },
-                          );
-                        },
                       ),
-              ),
-            ],
+                      IconButton(
+                        tooltip: 'Fetch models',
+                        onPressed: app.isFetchingModels
+                            ? null
+                            : () => unawaited(app.fetchModels()),
+                        icon: app.isFetchingModels
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(LucideIcons.refreshCw, size: 16),
+                      ),
+                      IconButton(
+                        tooltip: 'Close',
+                        onPressed: widget.onClose,
+                        icon: const Icon(LucideIcons.x, size: 16),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    14,
+                    0,
+                    14,
+                    widget.compact ? 8 : 12,
+                  ),
+                  child: TextField(
+                    decoration: InputDecoration(
+                      prefixIcon: const Icon(LucideIcons.search, size: 16),
+                      hintText: app.language == AppLanguage.en
+                          ? 'Search models...'
+                          : 'Cari model...',
+                      isDense: true,
+                    ),
+                    onChanged: (value) => setState(() => query = value),
+                  ),
+                ),
+                if (app.modelFetchStatus.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        app.modelFetchStatus,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color:
+                              app.modelFetchStatus.toLowerCase().contains(
+                                'failed',
+                              )
+                              ? p.error
+                              : p.onSurfaceVariant,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                Flexible(
+                  child: models.isEmpty
+                      ? Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+                          child: Text(
+                            app.isFetchingModels
+                                ? 'Fetching models...'
+                                : 'No models match your search.',
+                            style: TextStyle(
+                              color: p.onSurfaceVariant,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          shrinkWrap: true,
+                          padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
+                          itemCount: models.length,
+                          separatorBuilder: (_, _) =>
+                              Divider(height: 1, color: p.outline),
+                          itemBuilder: (context, index) {
+                            final model = models[index];
+                            final selected = model == app.selectedModel;
+                            final endpointLabel = _endpointLabel(app, model);
+                            return ListTile(
+                              dense: true,
+                              minVerticalPadding: widget.compact ? 7 : 10,
+                              visualDensity: widget.compact
+                                  ? VisualDensity.compact
+                                  : VisualDensity.standard,
+                              title: Text(
+                                model,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: selected
+                                      ? p.onSurface
+                                      : p.onSurface.withValues(alpha: 0.78),
+                                  fontWeight: selected
+                                      ? FontWeight.w900
+                                      : FontWeight.w600,
+                                ),
+                              ),
+                              subtitle: Text(
+                                endpointLabel,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: p.onSurfaceVariant,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              trailing: selected
+                                  ? Icon(
+                                      LucideIcons.check,
+                                      color: p.primary,
+                                      size: 18,
+                                    )
+                                  : null,
+                              onTap: () {
+                                app.setSelectedModel(model);
+                                widget.onClose();
+                              },
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -554,6 +625,14 @@ class _AppDrawer extends StatefulWidget {
 
 class _AppDrawerState extends State<_AppDrawer> {
   bool memoryOpen = false;
+  bool searchOpen = false;
+  final searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -561,13 +640,25 @@ class _AppDrawerState extends State<_AppDrawer> {
     final activeSessions = app.activeSessions
         .where((session) => !session.temporary)
         .toList();
+    final searchQuery = searchController.text.trim();
+    final visibleSessions = searchQuery.isEmpty
+        ? activeSessions
+        : activeSessions
+              .where((session) => _sessionMatches(session, searchQuery))
+              .toList();
     final copy = UiCopy(app.language);
     final p = AppPalette.fromBrightness(
       Theme.of(context).brightness == Brightness.dark,
     );
     return Drawer(
       width: 320,
-      backgroundColor: p.isDark ? Colors.black : Colors.white,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.horizontal(
+          right: Radius.circular(p.sidebarRadius),
+        ),
+      ),
+      backgroundColor: p.surface,
       child: SafeArea(
         child: Column(
           children: [
@@ -602,8 +693,25 @@ class _AppDrawerState extends State<_AppDrawer> {
             _NavTile(
               icon: LucideIcons.search,
               label: 'Search',
-              active: false,
-              onTap: () {},
+              active: searchOpen,
+              onTap: () {
+                setState(() {
+                  searchOpen = !searchOpen;
+                  if (!searchOpen) searchController.clear();
+                });
+              },
+            ),
+            AnimatedCrossFade(
+              firstChild: const SizedBox.shrink(),
+              secondChild: _DrawerSearchField(
+                controller: searchController,
+                onChanged: (_) => setState(() {}),
+                onClear: () => setState(searchController.clear),
+              ),
+              crossFadeState: searchOpen
+                  ? CrossFadeState.showSecond
+                  : CrossFadeState.showFirst,
+              duration: const Duration(milliseconds: 180),
             ),
             _NavTile(
               icon: LucideIcons.brain,
@@ -631,39 +739,50 @@ class _AppDrawerState extends State<_AppDrawer> {
               child: Divider(color: p.outline),
             ),
             Expanded(
-              child: ListView.builder(
+              child: ListView(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                itemCount:
-                    1 +
-                    activeSessions.length +
-                    (activeSessions.isNotEmpty ? 1 : 0),
-                itemBuilder: (context, index) {
-                  if (index == 0) {
-                    return Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+                    child: Text(
+                      (searchQuery.isEmpty
+                              ? copy.t('sidebar', 'recentSessions')
+                              : 'Search results')
+                          .toUpperCase(),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: p.onSurfaceVariant.withValues(alpha: 0.7),
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.4,
+                      ),
+                    ),
+                  ),
+                  if (searchQuery.isNotEmpty && visibleSessions.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
                       child: Text(
-                        copy.t('sidebar', 'recentSessions').toUpperCase(),
+                        'No chats contain "$searchQuery".',
                         style: TextStyle(
-                          fontSize: 11,
-                          color: p.onSurfaceVariant.withValues(alpha: 0.7),
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1.4,
+                          color: p.onSurfaceVariant,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                    );
-                  }
-                  final sessionIndex = index - 1;
-                  if (sessionIndex < activeSessions.length) {
-                    return _SessionTile(session: activeSessions[sessionIndex]);
-                  }
-                  return _NavTile(
-                    icon: LucideIcons.trash2,
-                    label: copy.t('sidebar', 'clearAll'),
-                    active: false,
-                    danger: true,
-                    onTap: () => _confirmClear(context, app),
-                  );
-                },
+                    )
+                  else
+                    ...visibleSessions.map(
+                      (session) =>
+                          _SessionTile(session: session, query: searchQuery),
+                    ),
+                  if (searchQuery.isEmpty && activeSessions.isNotEmpty)
+                    _NavTile(
+                      icon: LucideIcons.trash2,
+                      label: copy.t('sidebar', 'clearAll'),
+                      active: false,
+                      danger: true,
+                      onTap: () => _confirmClear(context, app),
+                    ),
+                ],
               ),
             ),
             Padding(
@@ -736,6 +855,14 @@ class _AppDrawerState extends State<_AppDrawer> {
     Navigator.pop(context);
   }
 
+  bool _sessionMatches(Session session, String query) {
+    final normalized = query.toLowerCase();
+    if (session.title.toLowerCase().contains(normalized)) return true;
+    return session.messages.any(
+      (message) => message.text.toLowerCase().contains(normalized),
+    );
+  }
+
   Future<void> _confirmClear(BuildContext context, AdoetzAppState app) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -804,6 +931,46 @@ class _NavTile extends StatelessWidget {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         tileColor: active ? p.onSurface.withValues(alpha: 0.06) : null,
         onTap: onTap,
+      ),
+    );
+  }
+}
+
+class _DrawerSearchField extends StatelessWidget {
+  const _DrawerSearchField({
+    required this.controller,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 2, 18, 10),
+      child: TextField(
+        controller: controller,
+        autofocus: true,
+        onChanged: onChanged,
+        style: TextStyle(color: p.onSurface, fontSize: 14),
+        decoration: InputDecoration(
+          prefixIcon: const Icon(LucideIcons.search, size: 16),
+          suffixIcon: controller.text.isEmpty
+              ? null
+              : IconButton(
+                  tooltip: 'Clear search',
+                  onPressed: onClear,
+                  icon: const Icon(LucideIcons.x, size: 16),
+                ),
+          hintText: 'Search chat content...',
+          isDense: true,
+        ),
       ),
     );
   }
@@ -968,9 +1135,10 @@ class _MemoryPanelState extends State<_MemoryPanel> {
 }
 
 class _SessionTile extends StatelessWidget {
-  const _SessionTile({required this.session});
+  const _SessionTile({required this.session, this.query = ''});
 
   final Session session;
+  final String query;
 
   @override
   Widget build(BuildContext context) {
@@ -980,6 +1148,7 @@ class _SessionTile extends StatelessWidget {
     );
     final active =
         app.currentView == AppView.chat && app.currentSessionId == session.id;
+    final preview = _matchPreview(session, query);
     return ListTile(
       dense: true,
       minLeadingWidth: 22,
@@ -998,6 +1167,18 @@ class _SessionTile extends StatelessWidget {
           fontSize: 15,
         ),
       ),
+      subtitle: preview == null
+          ? null
+          : Text(
+              preview,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: p.onSurfaceVariant.withValues(alpha: 0.74),
+                fontSize: 11,
+                height: 1.25,
+              ),
+            ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1025,6 +1206,23 @@ class _SessionTile extends StatelessWidget {
         Navigator.pop(context);
       },
     );
+  }
+
+  String? _matchPreview(Session session, String query) {
+    final clean = query.trim().toLowerCase();
+    if (clean.isEmpty) return null;
+    for (final message in session.messages) {
+      final text = message.text.replaceAll(RegExp(r'\s+'), ' ').trim();
+      final lower = text.toLowerCase();
+      final matchIndex = lower.indexOf(clean);
+      if (matchIndex < 0) continue;
+      final start = math.max(0, matchIndex - 34);
+      final end = math.min(text.length, matchIndex + clean.length + 74);
+      final prefix = start > 0 ? '...' : '';
+      final suffix = end < text.length ? '...' : '';
+      return '$prefix${text.substring(start, end)}$suffix';
+    }
+    return session.title.toLowerCase().contains(clean) ? session.title : null;
   }
 
   Future<void> _handleMenu(

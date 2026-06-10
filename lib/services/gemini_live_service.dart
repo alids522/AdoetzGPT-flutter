@@ -40,6 +40,7 @@ class GeminiLiveService {
   static const _inputSampleRate = 24000;
   static const _outputSampleRate = 24000;
   static const _outputLevelWindow = Duration(milliseconds: 80);
+  static const _echoGuardTail = Duration(milliseconds: 520);
   static const _inputMimeType = 'audio/pcm;rate=$_inputSampleRate';
   static const _liveEndpointPath =
       '/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
@@ -70,6 +71,7 @@ class GeminiLiveService {
   Completer<void>? _setupCompleter;
   final List<Timer> _outputLevelTimers = [];
   DateTime _nextOutputLevelAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _suppressMicUntil = DateTime.fromMillisecondsSinceEpoch(0);
   int _lastVideoFrameMs = 0;
   bool _running = false;
   bool _recording = false;
@@ -153,12 +155,17 @@ class GeminiLiveService {
     _micSub = stream.listen(
       (bytes) {
         if (!_running || !_recording || bytes.isEmpty) return;
+        final level = _pcmLevel(bytes);
+        if (_isEchoGuardActive()) {
+          onLevel(0);
+          return;
+        }
         _send({
           'realtimeInput': {
             'audio': {'data': base64Encode(bytes), 'mimeType': _inputMimeType},
           },
         });
-        onLevel(_pcmLevel(bytes));
+        onLevel(level);
       },
       onError: _handleError,
       cancelOnError: false,
@@ -402,6 +409,7 @@ class GeminiLiveService {
     }
 
     _nextOutputLevelAt = cursor;
+    _suppressMicUntil = cursor.add(_echoGuardTail);
     _scheduleOutputLevelTimer(
       cursor.add(const Duration(milliseconds: 180)).difference(now),
       0,
@@ -424,8 +432,11 @@ class GeminiLiveService {
     }
     _outputLevelTimers.clear();
     _nextOutputLevelAt = DateTime.now();
+    _suppressMicUntil = DateTime.fromMillisecondsSinceEpoch(0);
     if (reset) onOutputLevel(0);
   }
+
+  bool _isEchoGuardActive() => DateTime.now().isBefore(_suppressMicUntil);
 
   String _formatLiveModel(String value) {
     final trimmed = value.trim();

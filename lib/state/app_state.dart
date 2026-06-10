@@ -53,6 +53,7 @@ class AdoetzAppState extends ChangeNotifier {
   AppView currentView = AppView.chat;
   AppLanguage language = AppLanguage.id;
   String theme = 'dark';
+  String visualTheme = 'default';
   String selectedModel = 'gemini-2.5-flash';
   bool isThinkingMode = false;
   bool isArtifactMode = false;
@@ -129,26 +130,43 @@ class AdoetzAppState extends ChangeNotifier {
       currentSessionId = activeSessions.first.id;
     }
 
+    createTemporarySession();
+    initialized = true;
+    notifyListeners();
+    unawaited(fetchModels());
+    unawaited(_persist());
+    unawaited(_pullRemoteStateAfterStartup());
+  }
+
+  Future<void> _pullRemoteStateAfterStartup() async {
     if (currentUser != null &&
         currentUser!.isGuest == false &&
         authToken.isNotEmpty &&
         syncSettings.enabled) {
       try {
-        final remote = await _sync.pullRemoteState(authToken, syncSettings);
+        final temporarySession = currentSession.temporary
+            ? currentSession
+            : null;
+        final remote = await _sync
+            .pullRemoteState(authToken, syncSettings)
+            .timeout(const Duration(seconds: 8));
         if (remote != null) {
           _applyState(_mergeRemote(buildState(), remote), notify: false);
+          if (temporarySession != null &&
+              !sessions.any((session) => session.id == temporarySession.id)) {
+            sessions = [temporarySession, ...sessions];
+            currentSessionId = temporarySession.id;
+          }
           lastSyncAt = DateTime.now().millisecondsSinceEpoch;
+          syncStatus = 'Database sync loaded.';
+          notifyListeners();
+          unawaited(_persist());
         }
       } catch (error) {
         syncStatus = 'Auto-pull failed; using local state.';
+        notifyListeners();
       }
     }
-
-    initialized = true;
-    notifyListeners();
-    unawaited(fetchModels());
-    unawaited(_persist());
-    createTemporarySession();
   }
 
   PersistedAppState buildState() {
@@ -167,6 +185,7 @@ class AdoetzAppState extends ChangeNotifier {
       syncSettings: syncSettings,
       language: language,
       theme: theme,
+      visualTheme: visualTheme,
       selectedModel: selectedModel,
       isThinkingMode: isThinkingMode,
       isArtifactMode: isArtifactMode,
@@ -193,6 +212,7 @@ class AdoetzAppState extends ChangeNotifier {
     syncSettings = state.syncSettings;
     language = state.language;
     theme = state.theme;
+    visualTheme = state.visualTheme;
     selectedModel = state.selectedModel;
     isThinkingMode = state.isThinkingMode;
     isArtifactMode = state.isArtifactMode;
@@ -260,6 +280,7 @@ class AdoetzAppState extends ChangeNotifier {
       syncSettings: local.syncSettings,
       language: remoteIsNewer ? remote.language : local.language,
       theme: remoteIsNewer ? remote.theme : local.theme,
+      visualTheme: remoteIsNewer ? remote.visualTheme : local.visualTheme,
       selectedModel: remoteIsNewer && remote.selectedModel.isNotEmpty
           ? remote.selectedModel
           : local.selectedModel,
@@ -287,9 +308,15 @@ class AdoetzAppState extends ChangeNotifier {
       memories: mergedMemories,
       tokenUsageData: mergedUsage,
       customCounters: counterMap.values.toList(),
-      soundEffectsEnabled: remoteIsNewer ? remote.soundEffectsEnabled : local.soundEffectsEnabled,
-      isLiveVideoEnabled: remoteIsNewer ? remote.isLiveVideoEnabled : local.isLiveVideoEnabled,
-      isLiveFrontCamera: remoteIsNewer ? remote.isLiveFrontCamera : local.isLiveFrontCamera,
+      soundEffectsEnabled: remoteIsNewer
+          ? remote.soundEffectsEnabled
+          : local.soundEffectsEnabled,
+      isLiveVideoEnabled: remoteIsNewer
+          ? remote.isLiveVideoEnabled
+          : local.isLiveVideoEnabled,
+      isLiveFrontCamera: remoteIsNewer
+          ? remote.isLiveFrontCamera
+          : local.isLiveFrontCamera,
       savedAt: DateTime.now().millisecondsSinceEpoch,
     );
   }
@@ -435,7 +462,20 @@ class AdoetzAppState extends ChangeNotifier {
   void toggleTheme() {
     theme = isDark ? 'light' : 'dark';
     notifyListeners();
-    unawaited(_persist());
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void setVisualTheme(String value) {
+    final normalized = switch (value.trim().toLowerCase()) {
+      'liquid-glass' || 'liquidglass' || 'glass' => 'liquid-glass',
+      'aurora-neon' || 'auroraneon' || 'aurora' || 'neon' => 'aurora-neon',
+      'modern-minimal' || 'modernminimal' || 'minimal' => 'modern-minimal',
+      _ => 'default',
+    };
+    if (visualTheme == normalized) return;
+    visualTheme = normalized;
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
   }
 
   void toggleThinkingMode() {
@@ -686,6 +726,7 @@ class AdoetzAppState extends ChangeNotifier {
             displayedBotText.length + charsToAdd,
           );
           _updateBotMessage(session.id, botId, displayedBotText);
+          _maybeHapticForStreaming(displayedBotText);
         }
       });
     }
@@ -710,11 +751,11 @@ class AdoetzAppState extends ChangeNotifier {
         },
         onText: (text) {
           fullBotText = text;
-          _maybeHapticForStreaming(text);
           startTypingTimer();
         },
       );
       typingTimer?.cancel();
+      typingTimer = null;
       _updateBotMessage(
         session.id,
         botId,
@@ -740,6 +781,7 @@ class AdoetzAppState extends ChangeNotifier {
       );
     } finally {
       typingTimer?.cancel();
+      typingTimer = null;
       isGenerating = false;
       notifyListeners();
       await _persistAndScheduleRemote();
@@ -1490,6 +1532,7 @@ class AdoetzAppState extends ChangeNotifier {
   @override
   void dispose() {
     _remoteSyncTimer?.cancel();
+    _liveInputReleaseTimer?.cancel();
     _liveOutputPulseTimer?.cancel();
     final live = _liveService;
     if (live != null) unawaited(live.dispose());
