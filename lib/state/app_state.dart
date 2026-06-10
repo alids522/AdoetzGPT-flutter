@@ -760,6 +760,10 @@ class AdoetzAppState extends ChangeNotifier {
           liveInputLevel = level;
           notifyListeners();
         },
+        onOutputLevel: (level) {
+          if (_liveService != service) return;
+          _setLiveOutputLevel(level);
+        },
         onRecordingChanged: (value) {
           if (_liveService != service) return;
           isLiveRecording = value;
@@ -1264,9 +1268,24 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void _pulseLiveOutput() {
-    liveOutputLevel = 0.82;
+    _setLiveOutputLevel(
+      liveOutputLevel < 0.32 ? 0.32 : liveOutputLevel,
+      releaseAfter: const Duration(milliseconds: 520),
+    );
+  }
+
+  void _setLiveOutputLevel(
+    double level, {
+    Duration releaseAfter = const Duration(milliseconds: 360),
+  }) {
+    liveOutputLevel = level.clamp(0.0, 1.0).toDouble();
     _liveOutputPulseTimer?.cancel();
-    _liveOutputPulseTimer = Timer(const Duration(milliseconds: 1100), () {
+    if (liveOutputLevel <= 0) {
+      _liveOutputPulseTimer = null;
+      notifyListeners();
+      return;
+    }
+    _liveOutputPulseTimer = Timer(releaseAfter, () {
       liveOutputLevel = 0;
       notifyListeners();
     });

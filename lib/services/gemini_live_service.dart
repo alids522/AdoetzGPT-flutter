@@ -29,6 +29,7 @@ class GeminiLiveService {
     required this.onInputTranscript,
     required this.onOutputTranscript,
     required this.onLevel,
+    required this.onOutputLevel,
     required this.onRecordingChanged,
     required this.onTurnComplete,
     required this.onError,
@@ -53,6 +54,7 @@ class GeminiLiveService {
   final LiveTranscriptCallback onInputTranscript;
   final LiveTranscriptCallback onOutputTranscript;
   final LiveLevelCallback onLevel;
+  final LiveLevelCallback onOutputLevel;
   final LiveBoolCallback onRecordingChanged;
   final LiveVoidCallback onTurnComplete;
   final LiveErrorCallback onError;
@@ -175,6 +177,7 @@ class GeminiLiveService {
     _channel = null;
     await _player.stop();
     onLevel(0);
+    onOutputLevel(0);
     onStatus('');
   }
 
@@ -238,10 +241,9 @@ class GeminiLiveService {
               if (inlineData is Map) {
                 final encoded = stringValue(inlineData['data']);
                 if (encoded.isNotEmpty) {
-                  _player.playPcm16(
-                    base64Decode(encoded),
-                    sampleRate: _outputSampleRate,
-                  );
+                  final bytes = base64Decode(encoded);
+                  onOutputLevel(_pcmLevel(bytes));
+                  _player.playPcm16(bytes, sampleRate: _outputSampleRate);
                 }
               }
             }
@@ -250,6 +252,7 @@ class GeminiLiveService {
 
         if (serverContent['interrupted'] == true) {
           onStatus('Interrupted.');
+          onOutputLevel(0);
           _player.stop().then(
             (_) => _player.start(sampleRate: _outputSampleRate),
             onError: (_) {},
@@ -258,6 +261,7 @@ class GeminiLiveService {
 
         if (serverContent['turnComplete'] == true) {
           onLevel(0);
+          onOutputLevel(0);
           onTurnComplete();
         }
       }
@@ -300,6 +304,7 @@ class GeminiLiveService {
     _recording = false;
     onRecordingChanged(false);
     onLevel(0);
+    onOutputLevel(0);
     onClosed();
   }
 

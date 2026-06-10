@@ -1616,15 +1616,21 @@ class _LiveVideoStage extends StatelessWidget {
                       ),
                     ),
                   const SizedBox(height: 24),
-                  _LiveVideoControls(
-                    recording: app.isLiveRecording,
-                    connecting: app.isLiveConnecting,
-                    status: app.liveStatus,
-                    level: app.liveInputLevel,
-                    outputLevel: app.liveOutputLevel,
-                    onVideo: app.toggleLiveVideo,
-                    onRecording: () => unawaited(app.toggleLiveRecording()),
-                    onClose: () => unawaited(app.stopLiveConversation()),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 980),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: _VoiceOverlay(
+                        key: const ValueKey('video-voice-overlay'),
+                        recording: app.isLiveRecording,
+                        connecting: app.isLiveConnecting,
+                        status: app.liveStatus,
+                        level: app.liveInputLevel,
+                        outputLevel: app.liveOutputLevel,
+                        onRecording: () => unawaited(app.toggleLiveRecording()),
+                        onClose: () => unawaited(app.stopLiveConversation()),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -1696,86 +1702,6 @@ class _LiveVideoTopControls extends StatelessWidget {
   }
 }
 
-class _LiveVideoControls extends StatelessWidget {
-  const _LiveVideoControls({
-    required this.recording,
-    required this.connecting,
-    required this.status,
-    required this.level,
-    required this.outputLevel,
-    required this.onVideo,
-    required this.onRecording,
-    required this.onClose,
-  });
-
-  final bool recording;
-  final bool connecting;
-  final String status;
-  final double level;
-  final double outputLevel;
-  final VoidCallback onVideo;
-  final VoidCallback onRecording;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 430;
-        final side = compact ? 50.0 : 58.0;
-        final gap = compact ? 8.0 : 16.0;
-        final capsuleWidth = compact ? 136.0 : 180.0;
-        return Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            _LiveCircleButton(
-              icon: LucideIcons.video,
-              size: side,
-              background: const Color(0xff2563eb),
-              color: Colors.white,
-              onPressed: onVideo,
-            ),
-            SizedBox(width: gap),
-            _LiveCircleButton(
-              icon: LucideIcons.monitorUp,
-              size: side,
-              onPressed: () {},
-            ),
-            SizedBox(width: gap),
-            _LiveStatusCapsule(
-              width: capsuleWidth,
-              height: side + 6,
-              recording: recording,
-              connecting: connecting,
-              level: level,
-              outputLevel: outputLevel,
-              status: status,
-            ),
-            SizedBox(width: gap),
-            _LiveCircleButton(
-              icon: LucideIcons.mic,
-              size: side,
-              background: recording
-                  ? Colors.black.withValues(alpha: 0.74)
-                  : const Color(0xffdc2626),
-              color: Colors.white,
-              onPressed: onRecording,
-            ),
-            SizedBox(width: gap),
-            _LiveCircleButton(
-              icon: LucideIcons.x,
-              size: side,
-              background: Colors.black.withValues(alpha: 0.74),
-              color: Colors.white,
-              onPressed: onClose,
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
 class _LiveStatusCapsule extends StatelessWidget {
   const _LiveStatusCapsule({
     required this.width,
@@ -1797,17 +1723,19 @@ class _LiveStatusCapsule extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final activeLevel = math.max(level, outputLevel).clamp(0.0, 1.0);
-    final isOutput = outputLevel > level;
-    final capsuleWidth = width + activeLevel * 56;
-    final glowAlpha = (0.20 + activeLevel * 0.58).clamp(0.20, 0.78);
-    final blurAmount = 16.0 + activeLevel * 28;
-    final capsuleColor = isOutput
-        ? const Color(0xff8b5cf6)
-        : const Color(0xff2563eb);
-    final capsuleColorEnd = isOutput
-        ? const Color(0xffc084fc)
-        : const Color(0xff60a5fa);
+    final activeLevel = math.max(level, outputLevel).clamp(0.0, 1.0).toDouble();
+    final isOutput = outputLevel > math.max(level, 0.03);
+    final idleLevel = connecting ? 0.18 : 0.0;
+    final visualLevel = math
+        .max(activeLevel, idleLevel)
+        .clamp(0.0, 1.0)
+        .toDouble();
+    final capsuleWidth = width + visualLevel * 44;
+    final capsuleHeight = height + visualLevel * 3;
+    final glowAlpha = (0.18 + visualLevel * 0.62).clamp(0.18, 0.80).toDouble();
+    final blurAmount = 15.0 + visualLevel * 30;
+    const capsuleColor = Color(0xff2563eb);
+    const capsuleColorEnd = Color(0xff60a5fa);
     final label = connecting
         ? 'Connecting...'
         : (isOutput
@@ -1819,17 +1747,19 @@ class _LiveStatusCapsule extends StatelessWidget {
       duration: const Duration(milliseconds: 120),
       curve: Curves.easeOut,
       width: capsuleWidth,
-      height: height,
+      height: capsuleHeight,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(height / 2),
+        borderRadius: BorderRadius.circular(capsuleHeight / 2),
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
             Colors.black.withValues(alpha: 0.96),
-            capsuleColor.withValues(alpha: recording || isOutput ? 0.96 : 0.68),
+            capsuleColor.withValues(
+              alpha: recording || isOutput || connecting ? 0.96 : 0.68,
+            ),
             capsuleColorEnd.withValues(
-              alpha: recording || isOutput ? 0.94 : 0.66,
+              alpha: recording || isOutput || connecting ? 0.94 : 0.66,
             ),
           ],
         ),
@@ -1848,23 +1778,7 @@ class _LiveStatusCapsule extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 100),
-                width: 5 + activeLevel * 10,
-                height: 5 + activeLevel * 10,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withValues(
-                    alpha: 0.55 + activeLevel * 0.45,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.white.withValues(alpha: activeLevel * 0.52),
-                      blurRadius: 8 + activeLevel * 10,
-                    ),
-                  ],
-                ),
-              ),
+              _LiveLevelGlyph(level: visualLevel),
               const SizedBox(width: 8),
               Flexible(
                 child: Text(
@@ -1886,6 +1800,47 @@ class _LiveStatusCapsule extends StatelessWidget {
   }
 }
 
+class _LiveLevelGlyph extends StatelessWidget {
+  const _LiveLevelGlyph({required this.level});
+
+  final double level;
+
+  @override
+  Widget build(BuildContext context) {
+    final clamped = level.clamp(0.0, 1.0).toDouble();
+    return SizedBox(
+      width: 18,
+      height: 18,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          for (final weight in const [0.62, 1.0, 0.76])
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 1.2),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 95),
+                curve: Curves.easeOut,
+                width: 3,
+                height: 5 + clamped * 12 * weight,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.58 + clamped * 0.42),
+                  borderRadius: BorderRadius.circular(2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.white.withValues(alpha: clamped * 0.38),
+                      blurRadius: 6 + clamped * 8,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _LiveCircleButton extends StatelessWidget {
   const _LiveCircleButton({
     required this.icon,
@@ -1894,7 +1849,6 @@ class _LiveCircleButton extends StatelessWidget {
     this.size = 58,
     this.iconSize = 26,
     this.background,
-    this.color,
   });
 
   final IconData icon;
@@ -1903,7 +1857,6 @@ class _LiveCircleButton extends StatelessWidget {
   final double size;
   final double iconSize;
   final Color? background;
-  final Color? color;
 
   @override
   Widget build(BuildContext context) {
@@ -1915,7 +1868,7 @@ class _LiveCircleButton extends StatelessWidget {
         onPressed: onPressed,
         style: IconButton.styleFrom(
           backgroundColor: background ?? Colors.black.withValues(alpha: 0.70),
-          foregroundColor: color ?? Colors.white,
+          foregroundColor: Colors.white,
           shape: const CircleBorder(),
           padding: EdgeInsets.zero,
         ),
