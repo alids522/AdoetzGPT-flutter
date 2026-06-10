@@ -291,7 +291,7 @@ ThemeData buildTheme(
   final textTheme = GoogleFonts.hankenGroteskTextTheme(
     base.textTheme,
   ).apply(bodyColor: p.onSurface, displayColor: p.onSurface);
-  return base.copyWith(
+  final theme = base.copyWith(
     extensions: [AppThemeTokens(palette: p)],
     scaffoldBackgroundColor: p.background,
     colorScheme:
@@ -312,8 +312,35 @@ ThemeData buildTheme(
       elevation: 0,
       foregroundColor: p.onSurface,
     ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: p.surfaceDim,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(p.isClassic ? 18 : p.controlRadius),
+        borderSide: BorderSide(color: p.outline),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(p.isClassic ? 18 : p.controlRadius),
+        borderSide: BorderSide(color: p.outline),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(p.isClassic ? 18 : p.controlRadius),
+        borderSide: BorderSide(
+          color: p.isAurora ? p.primary : p.primary.withValues(alpha: 0.55),
+          width: p.isAurora ? 1.4 : 1,
+        ),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    ),
+  );
+
+  if (p.isClassic) {
+    return theme;
+  }
+
+  return theme.copyWith(
     drawerTheme: DrawerThemeData(
-      backgroundColor: p.isClassic ? p.background : p.surface,
+      backgroundColor: p.surface,
       scrimColor: Colors.black.withValues(alpha: p.isAurora ? 0.72 : 0.60),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.horizontal(
@@ -381,26 +408,6 @@ ThemeData buildTheme(
           borderRadius: BorderRadius.circular(p.controlRadius),
         ),
       ),
-    ),
-    inputDecorationTheme: InputDecorationTheme(
-      filled: true,
-      fillColor: p.surfaceDim,
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(p.controlRadius),
-        borderSide: BorderSide(color: p.outline),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(p.controlRadius),
-        borderSide: BorderSide(color: p.outline),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(p.controlRadius),
-        borderSide: BorderSide(
-          color: p.isAurora ? p.primary : p.primary.withValues(alpha: 0.55),
-          width: p.isAurora ? 1.4 : 1,
-        ),
-      ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
     ),
   );
 }
