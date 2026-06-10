@@ -1448,23 +1448,8 @@ class _InputPod extends StatelessWidget {
           math.pow(contextRatio, 1.35).toDouble(),
         ) ??
         p.error;
-    return Container(
-      decoration: BoxDecoration(
-        color: p.isDark
-            ? const Color(0xf2111111)
-            : Colors.white.withValues(alpha: 0.96),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: p.outline),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: p.isDark ? 0.45 : 0.10),
-            blurRadius: 34,
-            offset: const Offset(0, 16),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
+    final inner = Column(
+      children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 6, 16, 5),
             child: Row(
@@ -1614,6 +1599,74 @@ class _InputPod extends StatelessWidget {
             ),
           ),
         ],
+      ],
+    );
+
+    if (p.isClassic) {
+      return Container(
+        decoration: BoxDecoration(
+          color: p.isDark
+              ? const Color(0xf2111111)
+              : Colors.white.withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: p.outline),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: p.isDark ? 0.45 : 0.10),
+              blurRadius: 34,
+              offset: const Offset(0, 16),
+            ),
+          ],
+        ),
+        child: inner,
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: [
+          BoxShadow(
+            color: p.shadow,
+            blurRadius: 30,
+            offset: const Offset(0, 14),
+          ),
+          if (p.isAurora)
+            BoxShadow(
+              color: p.glow.withValues(alpha: 0.12),
+              blurRadius: 28,
+              spreadRadius: -8,
+            ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(
+            sigmaX: p.glassBlur > 0 ? p.glassBlur : 24,
+            sigmaY: p.glassBlur > 0 ? p.glassBlur : 24,
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              color: p.surface,
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(
+                color: p.outline.withValues(alpha: p.isAurora ? 0.3 : 0.8),
+              ),
+              gradient: p.isLiquidGlass ? LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.white.withValues(alpha: p.isDark ? 0.15 : 0.8),
+                  p.surface,
+                  p.surface.withValues(alpha: p.isDark ? 0.05 : 0.4),
+                ],
+                stops: const [0.0, 0.4, 1.0],
+              ) : null,
+            ),
+            child: inner,
+          ),
+        ),
       ),
     );
   }

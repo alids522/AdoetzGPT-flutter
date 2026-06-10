@@ -659,10 +659,13 @@ class _AppDrawerState extends State<_AppDrawer> {
         ),
       ),
       backgroundColor:
-          p.isClassic ? (p.isDark ? Colors.black : Colors.white) : p.surface,
-      child: SafeArea(
-        child: Column(
-          children: [
+          p.isClassic ? (p.isDark ? Colors.black : Colors.white) : Colors.transparent,
+      elevation: p.isClassic ? 16 : 0,
+      child: Builder(
+        builder: (context) {
+          final inner = SafeArea(
+            child: Column(
+              children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(22, 14, 12, 10),
               child: Row(
