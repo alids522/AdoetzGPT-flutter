@@ -864,7 +864,10 @@ class _MessageBubble extends StatelessWidget {
           padding: const EdgeInsets.only(right: 20),
           child: Icon(LucideIcons.gitBranch, color: p.primary, size: 24),
         ),
-        child: bubble,
+        child: SizedBox(
+          width: double.infinity,
+          child: bubble,
+        ),
       );
     }
 

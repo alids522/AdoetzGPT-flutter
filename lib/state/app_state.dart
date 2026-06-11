@@ -29,6 +29,7 @@ class AdoetzAppState extends ChangeNotifier {
   Timer? _liveInputReleaseTimer;
   Timer? _liveOutputPulseTimer;
   DateTime? _lastHapticAt;
+  DateTime? _lastStreamUpdate;
 
   final _audioPlayer = AudioPlayer();
 
@@ -647,6 +648,7 @@ class AdoetzAppState extends ChangeNotifier {
     unawaited(_playSound('send_user_message.wav'));
     unawaited(_playSound('loading_ai_response.wav'));
 
+    _lastStreamUpdate = null;
     Timer? loadingAudioTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
       if (!isGenerating) {
         timer.cancel();
@@ -725,8 +727,12 @@ class AdoetzAppState extends ChangeNotifier {
             loadingAudioTimer = null;
           }
           if (isGenerating) {
-            _updateBotMessage(session.id, botId, text);
-            _maybeHapticForStreaming(text);
+            final now = DateTime.now();
+            if (_lastStreamUpdate == null || now.difference(_lastStreamUpdate!).inMilliseconds > 60) {
+              _lastStreamUpdate = now;
+              _updateBotMessage(session.id, botId, text);
+              _maybeHapticForStreaming(text);
+            }
           }
         },
       );
