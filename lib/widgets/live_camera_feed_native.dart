@@ -20,6 +20,7 @@ class _LiveCameraFeedState extends State<LiveCameraFeed> {
   Timer? _timer;
   String? _error;
   bool _capturing = false;
+  bool _disposed = false;
 
   @override
   void initState() {
@@ -87,7 +88,7 @@ class _LiveCameraFeedState extends State<LiveCameraFeed> {
   }
 
   Future<void> _captureFrame() async {
-    if (!mounted || _capturing) return;
+    if (!mounted || _capturing || _disposed) return;
     final app = context.read<AdoetzAppState>();
     final controller = _controller;
     if (controller == null ||
@@ -110,6 +111,7 @@ class _LiveCameraFeedState extends State<LiveCameraFeed> {
 
   @override
   void dispose() {
+    _disposed = true;
     _timer?.cancel();
     _controller?.dispose();
     super.dispose();

@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-enum AppVisualTheme { classic, liquidGlass, auroraNeon, modernMinimal }
+enum AppVisualTheme { classic, liquidGlass, auroraNeon, modernMinimal, ios26, midnightBloom }
 
 class AppVisualThemeOption {
   const AppVisualThemeOption({
@@ -45,6 +45,18 @@ const appVisualThemeOptions = [
     description: 'Clean, spacious, and productivity focused.',
     icon: LucideIcons.panelTop,
   ),
+  AppVisualThemeOption(
+    key: 'ios26',
+    label: 'iOS 26 Vision',
+    description: 'Extreme liquid glass with fluid animated depth.',
+    icon: LucideIcons.box,
+  ),
+  AppVisualThemeOption(
+    key: 'midnight-bloom',
+    label: 'Midnight Bloom',
+    description: 'Deep indigo garden with emerald, gold, and rose glow.',
+    icon: LucideIcons.palette,
+  ),
 ];
 
 AppVisualTheme appVisualThemeFromKey(String value) {
@@ -57,6 +69,11 @@ AppVisualTheme appVisualThemeFromKey(String value) {
     'modern-minimal' ||
     'modernminimal' ||
     'minimal' => AppVisualTheme.modernMinimal,
+    'ios26' || 'vision' => AppVisualTheme.ios26,
+    'midnight-bloom' ||
+    'midnightbloom' ||
+    'midnight' ||
+    'bloom' => AppVisualTheme.midnightBloom,
     _ => AppVisualTheme.classic,
   };
 }
@@ -67,6 +84,8 @@ String appVisualThemeKey(AppVisualTheme theme) {
     AppVisualTheme.liquidGlass => 'liquid-glass',
     AppVisualTheme.auroraNeon => 'aurora-neon',
     AppVisualTheme.modernMinimal => 'modern-minimal',
+    AppVisualTheme.ios26 => 'ios26',
+    AppVisualTheme.midnightBloom => 'midnight-bloom',
   };
 }
 
@@ -125,6 +144,8 @@ class AppPalette {
   bool get isLiquidGlass => visualTheme == AppVisualTheme.liquidGlass;
   bool get isAurora => visualTheme == AppVisualTheme.auroraNeon;
   bool get isMinimal => visualTheme == AppVisualTheme.modernMinimal;
+  bool get isIos26 => visualTheme == AppVisualTheme.ios26;
+  bool get isMidnightBloom => visualTheme == AppVisualTheme.midnightBloom;
 
   factory AppPalette.fromBrightness(bool dark, {AppVisualTheme? visualTheme}) {
     final theme = visualTheme ?? _ThemeRuntime.visualTheme;
@@ -221,6 +242,68 @@ class AppPalette {
         sidebarRadius: 24,
         glassBlur: 0,
         motionScale: 0.65,
+      );
+    }
+    if (theme == AppVisualTheme.ios26) {
+      return AppPalette(
+        visualTheme: theme,
+        isDark: dark,
+        background: dark ? const Color(0xff000000) : const Color(0xfff2f2f7),
+        surface: dark ? Colors.white.withValues(alpha: 0.05) : Colors.white.withValues(alpha: 0.55),
+        surfaceDim: dark ? Colors.white.withValues(alpha: 0.02) : Colors.white.withValues(alpha: 0.35),
+        surfaceBright: dark ? Colors.white.withValues(alpha: 0.12) : Colors.white.withValues(alpha: 0.85),
+        primary: const Color(0xff007aff),
+        secondary: dark ? const Color(0xff8e8e93) : const Color(0xff8e8e93),
+        onSurface: dark ? Colors.white : Colors.black,
+        onSurfaceVariant: dark ? const Color(0xffebebf5).withValues(alpha: 0.6) : const Color(0xff3c3c43).withValues(alpha: 0.6),
+        outline: dark ? Colors.white.withValues(alpha: 0.15) : Colors.black.withValues(alpha: 0.08),
+        error: const Color(0xffff3b30),
+        highlight: Colors.white.withValues(alpha: dark ? 0.25 : 0.9),
+        glow: const Color(0xff5ac8fa),
+        shadow: Colors.black.withValues(alpha: dark ? 0.8 : 0.15),
+        panelRadius: 40,
+        cardRadius: 32,
+        controlRadius: 28,
+        sidebarRadius: 40,
+        glassBlur: 45,
+        motionScale: 1.25,
+      );
+    }
+    if (theme == AppVisualTheme.midnightBloom) {
+      return AppPalette(
+        visualTheme: theme,
+        isDark: dark,
+        background: dark ? const Color(0xff06060f) : const Color(0xfff0f4f2),
+        surface: dark
+            ? const Color(0xcc0c0c1f)
+            : Colors.white.withValues(alpha: 0.72),
+        surfaceDim: dark
+            ? const Color(0x99101028)
+            : const Color(0x88dbe8e0),
+        surfaceBright: dark
+            ? const Color(0xff151530)
+            : const Color(0xffffffff),
+        primary: dark ? const Color(0xff10b981) : const Color(0xff059669),
+        secondary: dark ? const Color(0xfff59e0b) : const Color(0xffd97706),
+        onSurface: dark ? const Color(0xffe8ecf0) : const Color(0xff111827),
+        onSurfaceVariant: dark
+            ? const Color(0xff94a3b8)
+            : const Color(0xff475569),
+        outline: dark
+            ? const Color(0xff10b981).withValues(alpha: 0.16)
+            : const Color(0xff059669).withValues(alpha: 0.14),
+        error: const Color(0xfffb7185),
+        highlight: dark
+            ? const Color(0xffec4899).withValues(alpha: 0.10)
+            : const Color(0xfff472b6).withValues(alpha: 0.16),
+        glow: dark ? const Color(0xffa855f7) : const Color(0xfff472b6),
+        shadow: const Color(0xff020617).withValues(alpha: dark ? 0.72 : 0.18),
+        panelRadius: 30,
+        cardRadius: 22,
+        controlRadius: 20,
+        sidebarRadius: 32,
+        glassBlur: 18,
+        motionScale: 1.1,
       );
     }
     return AppPalette(
@@ -670,7 +753,9 @@ class _ThemedBackdropState extends State<ThemedBackdrop>
     final p = AppPalette.of(context);
     final reducedMotion =
         MediaQuery.maybeOf(context)?.disableAnimations ?? false;
-    final shouldAnimate = (p.isAurora || p.isLiquidGlass) && !reducedMotion;
+    final shouldAnimate =
+        (p.isAurora || p.isLiquidGlass || p.isIos26 || p.isMidnightBloom) &&
+        !reducedMotion;
     if (shouldAnimate && !_controller.isAnimating) {
       _controller.repeat();
     } else if (!shouldAnimate && _controller.isAnimating) {
@@ -691,28 +776,56 @@ class _ThemedBackdropState extends State<ThemedBackdrop>
         return DecoratedBox(
           decoration: BoxDecoration(
             color: p.background,
-            gradient: p.isAurora
+            gradient: p.isMidnightBloom
                 ? LinearGradient(
                     begin: alignmentA,
                     end: alignmentB,
                     colors: [
                       p.background,
-                      const Color(0xff111827),
-                      const Color(0xff172554).withValues(alpha: 0.86),
-                      const Color(0xff312e81).withValues(alpha: 0.78),
+                      const Color(0xff0f172a).withValues(alpha: 0.70),
+                      p.glow.withValues(alpha: 0.22),
+                      const Color(0xffec4899).withValues(alpha: 0.14),
                       p.background,
                     ],
-                    stops: const [0, 0.28, 0.52, 0.72, 1],
+                    stops: const [0, 0.22, 0.48, 0.74, 1],
                   )
-                : RadialGradient(
-                    center: alignmentA,
-                    radius: 1.25,
+                : p.isIos26
+                ? LinearGradient(
+                    begin: alignmentA,
+                    end: alignmentB,
                     colors: [
-                      Colors.white.withValues(alpha: p.isDark ? 0.10 : 0.62),
-                      p.glow.withValues(alpha: p.isDark ? 0.10 : 0.20),
+                      p.background,
+                      p.glow.withValues(alpha: p.isDark ? 0.25 : 0.35),
+                      p.primary.withValues(alpha: p.isDark ? 0.35 : 0.45),
+                      const Color(0xffa78bfa)
+                          .withValues(alpha: p.isDark ? 0.25 : 0.35),
                       p.background,
                     ],
-                  ),
+                    stops: const [0, 0.25, 0.5, 0.75, 1],
+                  )
+                : p.isAurora
+                    ? LinearGradient(
+                        begin: alignmentA,
+                        end: alignmentB,
+                        colors: [
+                          p.background,
+                          const Color(0xff111827),
+                          const Color(0xff172554).withValues(alpha: 0.86),
+                          const Color(0xff312e81).withValues(alpha: 0.78),
+                          p.background,
+                        ],
+                        stops: const [0, 0.28, 0.52, 0.72, 1],
+                      )
+                    : RadialGradient(
+                        center: alignmentA,
+                        radius: 1.25,
+                        colors: [
+                          Colors.white
+                              .withValues(alpha: p.isDark ? 0.10 : 0.62),
+                          p.glow.withValues(alpha: p.isDark ? 0.10 : 0.20),
+                          p.background,
+                        ],
+                      ),
           ),
         );
       },

@@ -459,6 +459,7 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void toggleTheme() {
+    unawaited(HapticFeedback.lightImpact());
     theme = isDark ? 'light' : 'dark';
     notifyListeners();
     unawaited(_persistAndScheduleRemote());
@@ -469,9 +470,15 @@ class AdoetzAppState extends ChangeNotifier {
       'liquid-glass' || 'liquidglass' || 'glass' => 'liquid-glass',
       'aurora-neon' || 'auroraneon' || 'aurora' || 'neon' => 'aurora-neon',
       'modern-minimal' || 'modernminimal' || 'minimal' => 'modern-minimal',
+      'ios26' || 'vision' => 'ios26',
+      'midnight-bloom' ||
+      'midnightbloom' ||
+      'midnight' ||
+      'bloom' => 'midnight-bloom',
       _ => 'default',
     };
     if (visualTheme == normalized) return;
+    unawaited(HapticFeedback.lightImpact());
     visualTheme = normalized;
     notifyListeners();
     unawaited(_persistAndScheduleRemote());
@@ -636,6 +643,7 @@ class AdoetzAppState extends ChangeNotifier {
     List<AttachmentData> attachments,
   ) async {
     if (isGenerating || (prompt.trim().isEmpty && attachments.isEmpty)) return;
+    unawaited(HapticFeedback.lightImpact());
     unawaited(_playSound('send_user_message.wav'));
     unawaited(_playSound('loading_ai_response.wav'));
 
@@ -693,34 +701,6 @@ class AdoetzAppState extends ChangeNotifier {
       );
     }
 
-    String fullBotText = '';
-    String displayedBotText = '';
-    Timer? typingTimer;
-
-    void startTypingTimer() {
-      typingTimer ??= Timer.periodic(const Duration(milliseconds: 50), (timer) {
-        if (!isGenerating) {
-          timer.cancel();
-          typingTimer = null;
-          if (displayedBotText != fullBotText) {
-            _updateBotMessage(session.id, botId, fullBotText);
-          }
-          return;
-        }
-
-        if (displayedBotText.length < fullBotText.length) {
-          int diff = fullBotText.length - displayedBotText.length;
-          int charsToAdd = (diff / 4).ceil().clamp(1, 40);
-          displayedBotText = fullBotText.substring(
-            0,
-            displayedBotText.length + charsToAdd,
-          );
-          _updateBotMessage(session.id, botId, displayedBotText);
-          _maybeHapticForStreaming(displayedBotText);
-        }
-      });
-    }
-
     try {
       final response = await _ai.sendMessage(
         prompt: prompt.trim(),
@@ -744,12 +724,13 @@ class AdoetzAppState extends ChangeNotifier {
             loadingAudioTimer?.cancel();
             loadingAudioTimer = null;
           }
-          fullBotText = text;
-          startTypingTimer();
+          if (isGenerating) {
+            _updateBotMessage(session.id, botId, text);
+            _maybeHapticForStreaming(text);
+          }
         },
       );
-      typingTimer?.cancel();
-      typingTimer = null;
+      
       _updateBotMessage(
         session.id,
         botId,
@@ -776,8 +757,6 @@ class AdoetzAppState extends ChangeNotifier {
     } finally {
       loadingAudioTimer?.cancel();
       loadingAudioTimer = null;
-      typingTimer?.cancel();
-      typingTimer = null;
       isGenerating = false;
       notifyListeners();
       await _persistAndScheduleRemote();
@@ -1004,16 +983,20 @@ class AdoetzAppState extends ChangeNotifier {
       (message) => message.id == messageId,
     );
     if (index == -1) return;
+    unawaited(HapticFeedback.lightImpact());
     final messages = [...session.messages];
     final attachments = messages[index].attachments;
     final trimmed = messages.sublist(0, index);
-    _replaceSession(
-      session.id,
-      session.copyWith(
-        messages: trimmed,
-        updatedAt: DateTime.now().millisecondsSinceEpoch,
-      ),
+    
+    final newSession = Session.empty();
+    final forkedSession = newSession.copyWith(
+      title: '${session.title} (Branch)',
+      messages: trimmed,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
+    
+    sessions = [forkedSession, ...sessions];
+    currentSessionId = forkedSession.id;
     notifyListeners();
     unawaited(sendMessage(text, attachments));
   }
@@ -1022,15 +1005,18 @@ class AdoetzAppState extends ChangeNotifier {
     final session = currentSession;
     for (var i = session.messages.length - 1; i >= 0; i--) {
       if (session.messages[i].isUser) {
+        unawaited(HapticFeedback.lightImpact());
         final user = session.messages[i];
         final trimmed = session.messages.sublist(0, i);
-        _replaceSession(
-          session.id,
-          session.copyWith(
-            messages: trimmed,
-            updatedAt: DateTime.now().millisecondsSinceEpoch,
-          ),
+        
+        final newSession = Session.empty();
+        final forkedSession = newSession.copyWith(
+          title: '${session.title} (Branch)',
+          messages: trimmed,
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
         );
+        sessions = [forkedSession, ...sessions];
+        currentSessionId = forkedSession.id;
         notifyListeners();
         unawaited(sendMessage(user.text, user.attachments));
         return;
@@ -1292,8 +1278,6 @@ class AdoetzAppState extends ChangeNotifier {
     isLiveActive = false;
     isLiveConnecting = false;
     isLiveRecording = false;
-    isLiveVideoEnabled = false;
-    isLiveFrontCamera = false;
     liveInputLevel = 0;
     liveOutputLevel = 0;
     _liveInputReleaseTimer?.cancel();

@@ -69,6 +69,8 @@ dependencies:
   audioplayers: ^6.1.0
   webview_flutter: ^4.8.0
   webview_flutter_web: ^0.2.3
+  syncfusion_flutter_pdf: any
+  speech_to_text: ^7.4.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -14,6 +14,8 @@ import 'package:markdown/markdown.dart' as md;
 import 'package:mime/mime.dart';
 import 'package:provider/provider.dart';
 import 'package:archive/archive.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 
 import '../models.dart';
 import '../services/ai_service.dart';
@@ -41,11 +43,61 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   bool _showScrollToBottom = false;
 
+  final _speechToText = SpeechToText();
+  bool _speechEnabled = false;
+  bool _isListening = false;
+  double _soundLevel = 0.0;
+  String _preDictationText = '';
+
   @override
   void initState() {
     super.initState();
     input.addListener(_rebuildForInput);
     scrollController.addListener(_onScroll);
+    _initSpeech();
+  }
+
+  void _initSpeech() async {
+    _speechEnabled = await _speechToText.initialize(
+      onStatus: (status) {
+        if (status == 'done' || status == 'notListening') {
+          if (mounted) setState(() { _isListening = false; _soundLevel = 0.0; });
+        }
+      },
+      onError: (errorNotification) {
+        if (mounted) setState(() { _isListening = false; _soundLevel = 0.0; });
+      },
+    );
+    if (mounted) setState(() {});
+  }
+
+  void _toggleDictation() async {
+    if (_isListening) {
+      await _speechToText.stop();
+      if (mounted) setState(() { _isListening = false; _soundLevel = 0.0; });
+    } else {
+      if (!_speechEnabled) {
+        _initSpeech();
+      }
+      if (_speechEnabled) {
+        _preDictationText = input.text;
+        final spacer = _preDictationText.isNotEmpty && !_preDictationText.endsWith(' ') ? ' ' : '';
+        if (mounted) setState(() => _isListening = true);
+        await _speechToText.listen(
+          onResult: (result) {
+            if (mounted) {
+              setState(() {
+                input.text = _preDictationText + spacer + result.recognizedWords;
+                input.selection = TextSelection.fromPosition(TextPosition(offset: input.text.length));
+              });
+            }
+          },
+          onSoundLevelChange: (level) {
+            if (mounted) setState(() => _soundLevel = level);
+          },
+        );
+      }
+    }
   }
 
   void _onScroll() {
@@ -102,21 +154,40 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           Positioned(
             right: 20,
             bottom: MediaQuery.of(context).padding.bottom + 168,
-            child: FloatingActionButton.small(
-              backgroundColor: p.surface,
-              elevation: 4,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-                side: BorderSide(color: p.outline),
-              ),
-              onPressed: () {
-                scrollController.animateTo(
-                  scrollController.position.maxScrollExtent,
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeOut,
-                );
-              },
-              child: Icon(LucideIcons.arrowDown, color: p.onSurface, size: 20),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                FloatingActionButton.small(
+                  backgroundColor: p.surface,
+                  elevation: 4,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: BorderSide(color: p.outline),
+                  ),
+                  onPressed: () {
+                    scrollController.animateTo(
+                      scrollController.position.maxScrollExtent,
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeOut,
+                    );
+                  },
+                  child: Icon(LucideIcons.arrowDown, color: p.onSurface, size: 20),
+                ),
+                if (app.isGenerating)
+                  Positioned(
+                    top: -2,
+                    right: -2,
+                    child: Container(
+                      width: 14,
+                      height: 14,
+                      decoration: BoxDecoration(
+                        color: p.primary,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: p.surface, width: 2),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
 
@@ -211,6 +282,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                 key: const ValueKey('input-pod'),
                                 input: input,
                                 attachments: attachments,
+                                isListening: _isListening,
+                                soundLevel: _soundLevel,
+                                onToggleDictation: _toggleDictation,
                                 onPick: _showAttachMenu,
                                 onSend: _sendOrLive,
                               ),
@@ -340,9 +414,47 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       final mime =
           lookupMimeType(file.name, headerBytes: bytes) ??
           'application/octet-stream';
-      attachments.add(
-        AttachmentData(name: file.name, type: mime, data: base64Encode(bytes)),
-      );
+          
+      if (mime == 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        try {
+          final document = PdfDocument(inputBytes: bytes);
+          final textExtractor = PdfTextExtractor(document);
+          final text = textExtractor.extractText();
+          document.dispose();
+          attachments.add(
+            AttachmentData(
+              name: file.name,
+              type: 'text/extracted',
+              data: text,
+            ),
+          );
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Failed to read PDF "${file.name}".')),
+            );
+          }
+        }
+      } else if (mime.startsWith('text/') || mime == 'application/json' || file.name.toLowerCase().endsWith('.md') || file.name.toLowerCase().endsWith('.csv') || file.name.toLowerCase().endsWith('.txt')) {
+        try {
+          final text = utf8.decode(bytes);
+          attachments.add(
+            AttachmentData(
+              name: file.name,
+              type: 'text/extracted',
+              data: text,
+            ),
+          );
+        } catch (e) {
+          attachments.add(
+            AttachmentData(name: file.name, type: mime, data: base64Encode(bytes)),
+          );
+        }
+      } else {
+        attachments.add(
+          AttachmentData(name: file.name, type: mime, data: base64Encode(bytes)),
+        );
+      }
     }
     setState(() {});
   }
@@ -547,7 +659,7 @@ class _MessageBubble extends StatelessWidget {
         ? math.min(620.0, laneWidth * 0.72)
         : laneWidth;
 
-    return Padding(
+    final bubble = Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: Column(
         crossAxisAlignment: align,
@@ -651,6 +763,15 @@ class _MessageBubble extends StatelessWidget {
                           ),
                           child: _PolygonProgressionLoading(),
                         )
+                      else if (app.isGenerating && 
+                          parsed.mainContent.length < 150 && 
+                          !parsed.mainContent.contains('\n') &&
+                          (parsed.mainContent.toLowerCase().startsWith('searching') ||
+                           parsed.mainContent.toLowerCase().startsWith('reading') ||
+                           parsed.mainContent.toLowerCase().startsWith('extracting') ||
+                           parsed.mainContent.toLowerCase().startsWith('connected') ||
+                           parsed.mainContent.toLowerCase().startsWith('connecting')))
+                        _SearchStatusPill(status: parsed.mainContent, palette: p)
                       else
                         _MarkdownMessage(data: parsed.mainContent, palette: p),
                     ],
@@ -726,6 +847,26 @@ class _MessageBubble extends StatelessWidget {
         ],
       ),
     );
+
+    if (message.isUser && !editing) {
+      return Dismissible(
+        key: ValueKey('dismiss-${message.id}'),
+        direction: DismissDirection.endToStart,
+        confirmDismiss: (direction) async {
+          HapticFeedback.lightImpact();
+          onEditStart();
+          return false;
+        },
+        background: Container(
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 20),
+          child: Icon(LucideIcons.gitBranch, color: p.primary, size: 24),
+        ),
+        child: bubble,
+      );
+    }
+
+    return bubble;
   }
 }
 
@@ -1281,6 +1422,16 @@ class _CopyableCodeBlock extends StatelessWidget {
             ),
             child: Row(
               children: [
+                Row(
+                  children: [
+                    Container(width: 11, height: 11, decoration: const BoxDecoration(color: Color(0xFFFF5F56), shape: BoxShape.circle)),
+                    const SizedBox(width: 6),
+                    Container(width: 11, height: 11, decoration: const BoxDecoration(color: Color(0xFFFFBD2E), shape: BoxShape.circle)),
+                    const SizedBox(width: 6),
+                    Container(width: 11, height: 11, decoration: const BoxDecoration(color: Color(0xFF27C93F), shape: BoxShape.circle)),
+                  ],
+                ),
+                const SizedBox(width: 14),
                 Expanded(
                   child: Text(
                     language.isEmpty ? 'code' : language,
@@ -1357,6 +1508,85 @@ class _TinyAction extends StatelessWidget {
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
+    );
+  }
+}
+
+class _SearchStatusPill extends StatefulWidget {
+  const _SearchStatusPill({required this.status, required this.palette});
+  final String status;
+  final AppPalette palette;
+
+  @override
+  State<_SearchStatusPill> createState() => _SearchStatusPillState();
+}
+
+class _SearchStatusPillState extends State<_SearchStatusPill> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+          decoration: BoxDecoration(
+            color: widget.palette.surfaceDim,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: widget.palette.primary.withValues(alpha: 0.3 + 0.3 * _controller.value),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: widget.palette.primary.withValues(alpha: 0.1 * _controller.value),
+                blurRadius: 12,
+                spreadRadius: 2,
+              )
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                LucideIcons.search,
+                size: 16,
+                color: widget.palette.primary,
+              ),
+              const SizedBox(width: 12),
+              Flexible(
+                child: Text(
+                  widget.status,
+                  style: TextStyle(
+                    color: widget.palette.onSurface,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -1510,12 +1740,18 @@ class _InputPod extends StatelessWidget {
     super.key,
     required this.input,
     required this.attachments,
+    required this.isListening,
+    required this.soundLevel,
+    required this.onToggleDictation,
     required this.onPick,
     required this.onSend,
   });
 
   final TextEditingController input;
   final List<AttachmentData> attachments;
+  final bool isListening;
+  final double soundLevel;
+  final VoidCallback onToggleDictation;
   final VoidCallback onPick;
   final VoidCallback onSend;
 
@@ -1663,11 +1899,34 @@ class _InputPod extends StatelessWidget {
                     ),
                   ),
                 ),
-                RoundIconButton(
-                  icon: LucideIcons.mic,
-                  onPressed: onSend,
-                  color: p.onSurface,
-                ),
+                isListening
+                    ? GestureDetector(
+                        onTap: onToggleDictation,
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: p.error.withValues(alpha: 0.15),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 100),
+                              width: 12 + (soundLevel * 0.4).clamp(0.0, 20.0),
+                              height: 12 + (soundLevel * 0.4).clamp(0.0, 20.0),
+                              decoration: BoxDecoration(
+                                color: p.error,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                    : RoundIconButton(
+                        icon: LucideIcons.mic,
+                        onPressed: onToggleDictation,
+                        color: p.onSurface,
+                      ),
                 const SizedBox(width: 4),
                 SizedBox(
                   width: 42,

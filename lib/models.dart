@@ -946,6 +946,11 @@ String _normalizeVisualTheme(Object? value) {
     'liquid-glass' || 'liquidglass' || 'glass' => 'liquid-glass',
     'aurora-neon' || 'auroraneon' || 'aurora' || 'neon' => 'aurora-neon',
     'modern-minimal' || 'modernminimal' || 'minimal' => 'modern-minimal',
+    'ios26' || 'vision' => 'ios26',
+    'midnight-bloom' ||
+    'midnightbloom' ||
+    'midnight' ||
+    'bloom' => 'midnight-bloom',
     _ => 'default',
   };
 }

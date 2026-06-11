@@ -56,7 +56,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           : Colors.white.withValues(alpha: 0.92),
                       borderRadius: BorderRadius.circular(24),
                       border: Border.all(
-                        color: p.outline.withValues(alpha: 1.8),
+                        color: p.outline.withValues(alpha: 0.18),
                       ),
                       boxShadow: [
                         BoxShadow(
@@ -245,7 +245,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           style: OutlinedButton.styleFrom(
                             foregroundColor: p.onSurface,
                             side: BorderSide(
-                              color: p.outline.withValues(alpha: 2),
+                              color: p.outline.withValues(alpha: 0.20),
                             ),
                             padding: const EdgeInsets.symmetric(vertical: 15),
                             shape: RoundedRectangleBorder(

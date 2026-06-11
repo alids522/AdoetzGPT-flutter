@@ -29,6 +29,7 @@ class _LiveCameraFeedState extends State<LiveCameraFeed> {
   String? _error;
   bool _capturing = false;
   bool _ready = false;
+  bool _disposed = false;
 
   @override
   void initState() {
@@ -120,7 +121,7 @@ class _LiveCameraFeedState extends State<LiveCameraFeed> {
   }
 
   void _captureFrame() {
-    if (!mounted || _capturing) return;
+    if (!mounted || _capturing || _disposed) return;
     final app = context.read<AdoetzAppState>();
     if (!app.isLiveActive ||
         _video.videoWidth <= 0 ||
@@ -159,6 +160,7 @@ class _LiveCameraFeedState extends State<LiveCameraFeed> {
 
   @override
   void dispose() {
+    _disposed = true;
     _timer?.cancel();
     _video.pause();
     _video.srcObject = null;

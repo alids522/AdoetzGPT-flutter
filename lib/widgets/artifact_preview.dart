@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -195,7 +197,17 @@ class _ArtifactPreviewState extends State<ArtifactPreview> {
         Expanded(
           child: ClipRRect(
             borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
-            child: WebViewWidget(controller: _controller),
+            child: WebViewWidget(
+              controller: _controller,
+              gestureRecognizers: {
+                Factory<VerticalDragGestureRecognizer>(
+                  () => VerticalDragGestureRecognizer(),
+                ),
+                Factory<HorizontalDragGestureRecognizer>(
+                  () => HorizontalDragGestureRecognizer(),
+                ),
+              },
+            ),
           ),
         ),
       ],

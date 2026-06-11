@@ -375,6 +375,12 @@ class AiService {
         : [
             {'type': 'text', 'text': finalPrompt},
             ...attachments.map((file) {
+              if (file.type == 'text/extracted') {
+                return {
+                  'type': 'text',
+                  'text': '\n=== Contents of ${file.name} ===\n${file.data}\n=== End of ${file.name} ===\n',
+                };
+              }
               if (file.type.startsWith('image/')) {
                 return {
                   'type': 'image_url',
@@ -518,11 +524,14 @@ class AiService {
         'role': 'user',
         'parts': [
           {'text': '$searchContext$prompt'},
-          ...attachments.map(
-            (file) => {
+          ...attachments.map((file) {
+            if (file.type == 'text/extracted') {
+              return {'text': '\n=== Contents of ${file.name} ===\n${file.data}\n=== End of ${file.name} ===\n'};
+            }
+            return {
               'inlineData': {'data': file.data, 'mimeType': file.type},
-            },
-          ),
+            };
+          }),
         ],
       },
     ];
@@ -924,6 +933,16 @@ class AiService {
       'weather',
       'happening',
       '2026',
+      // Indonesian triggers
+      'terbaru',
+      'terkini',
+      'hari ini',
+      'sekarang',
+      'berita',
+      'harga',
+      'cuaca',
+      'jadwal',
+      'sedang terjadi',
     ];
     return triggers.any(text.contains);
   }
