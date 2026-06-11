@@ -315,6 +315,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final files = List<AttachmentData>.from(attachments);
     input.clear();
     setState(attachments.clear);
+    if (_isListening) {
+      _toggleDictation();
+    }
     app.sendMessage(text, files);
     Future.delayed(const Duration(milliseconds: 120), () {
       if (scrollController.hasClients) {
