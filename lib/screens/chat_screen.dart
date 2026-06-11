@@ -46,13 +46,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final _speechToText = SpeechToText();
   bool _speechEnabled = false;
   bool _isListening = false;
-  double _soundLevel = 0.0;
+  final ValueNotifier<double> _soundLevel = ValueNotifier(0.0);
   String _preDictationText = '';
 
   @override
   void initState() {
     super.initState();
-    input.addListener(_rebuildForInput);
     scrollController.addListener(_onScroll);
     _initSpeech();
   }
@@ -61,11 +60,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _speechEnabled = await _speechToText.initialize(
       onStatus: (status) {
         if (status == 'done' || status == 'notListening') {
-          if (mounted) setState(() { _isListening = false; _soundLevel = 0.0; });
+          if (mounted) setState(() => _isListening = false);
+          _soundLevel.value = 0.0;
         }
       },
       onError: (errorNotification) {
-        if (mounted) setState(() { _isListening = false; _soundLevel = 0.0; });
+        if (mounted) setState(() => _isListening = false);
+        _soundLevel.value = 0.0;
       },
     );
     if (mounted) setState(() {});
@@ -74,7 +75,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   void _toggleDictation() async {
     if (_isListening) {
       await _speechToText.stop();
-      if (mounted) setState(() { _isListening = false; _soundLevel = 0.0; });
+      if (mounted) setState(() => _isListening = false);
+      _soundLevel.value = 0.0;
     } else {
       if (!_speechEnabled) {
         _initSpeech();
@@ -93,7 +95,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             }
           },
           onSoundLevelChange: (level) {
-            if (mounted) setState(() => _soundLevel = level);
+            _soundLevel.value = level;
           },
         );
       }
@@ -112,16 +114,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    input.removeListener(_rebuildForInput);
+    _speechToText.stop();
+    _soundLevel.dispose();
     input.dispose();
     scrollController.removeListener(_onScroll);
     scrollController.dispose();
     editController.dispose();
     super.dispose();
-  }
-
-  void _rebuildForInput() {
-    if (mounted) setState(() {});
   }
 
   @override
@@ -283,7 +282,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                 input: input,
                                 attachments: attachments,
                                 isListening: _isListening,
-                                soundLevel: _soundLevel,
+                                soundLevelNotifier: _soundLevel,
                                 onToggleDictation: _toggleDictation,
                                 onPick: _showAttachMenu,
                                 onSend: _sendOrLive,
@@ -1744,7 +1743,7 @@ class _InputPod extends StatelessWidget {
     required this.input,
     required this.attachments,
     required this.isListening,
-    required this.soundLevel,
+    required this.soundLevelNotifier,
     required this.onToggleDictation,
     required this.onPick,
     required this.onSend,
@@ -1753,7 +1752,7 @@ class _InputPod extends StatelessWidget {
   final TextEditingController input;
   final List<AttachmentData> attachments;
   final bool isListening;
-  final double soundLevel;
+  final ValueNotifier<double> soundLevelNotifier;
   final VoidCallback onToggleDictation;
   final VoidCallback onPick;
   final VoidCallback onSend;
@@ -1913,14 +1912,19 @@ class _InputPod extends StatelessWidget {
                             shape: BoxShape.circle,
                           ),
                           child: Center(
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 100),
-                              width: 12 + (soundLevel * 0.4).clamp(0.0, 20.0),
-                              height: 12 + (soundLevel * 0.4).clamp(0.0, 20.0),
-                              decoration: BoxDecoration(
-                                color: p.error,
-                                shape: BoxShape.circle,
-                              ),
+                            child: ValueListenableBuilder<double>(
+                              valueListenable: soundLevelNotifier,
+                              builder: (context, soundLevel, _) {
+                                return AnimatedContainer(
+                                  duration: const Duration(milliseconds: 100),
+                                  width: 12 + (soundLevel * 0.4).clamp(0.0, 20.0),
+                                  height: 12 + (soundLevel * 0.4).clamp(0.0, 20.0),
+                                  decoration: BoxDecoration(
+                                    color: p.error,
+                                    shape: BoxShape.circle,
+                                  ),
+                                );
+                              },
                             ),
                           ),
                         ),
@@ -1941,15 +1945,19 @@ class _InputPod extends StatelessWidget {
                       padding: EdgeInsets.zero,
                       shape: const CircleBorder(),
                     ),
-                    child: Icon(
-                      app.isGenerating
-                          ? LucideIcons.square
-                          : (input.text.trim().isNotEmpty ||
-                                    attachments.isNotEmpty
-                                ? LucideIcons.arrowUp
-                                : LucideIcons.audioLines),
-                      size: app.isGenerating ? 15 : 20,
-                      color: Colors.white,
+                    child: AnimatedBuilder(
+                      animation: input,
+                      builder: (context, _) {
+                        return Icon(
+                          app.isGenerating
+                              ? LucideIcons.square
+                              : (input.text.trim().isNotEmpty || attachments.isNotEmpty
+                                  ? LucideIcons.arrowUp
+                                  : LucideIcons.audioLines),
+                          size: app.isGenerating ? 15 : 20,
+                          color: Colors.white,
+                        );
+                      },
                     ),
                   ),
                 ),
