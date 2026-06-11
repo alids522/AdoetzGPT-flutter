@@ -56,6 +56,14 @@ class LiveForegroundService : Service() {
             launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val muteIntent = Intent(ACTION_TOGGLE_MIC).setPackage(packageName)
+        val mutePending = PendingIntent.getBroadcast(this, 1, muteIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val muteAction = Notification.Action.Builder(0, "Toggle Mic", mutePending).build()
+
+        val endIntent = Intent(ACTION_END_LIVE).setPackage(packageName)
+        val endPending = PendingIntent.getBroadcast(this, 2, endIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val endAction = Notification.Action.Builder(0, "End Live", endPending).build()
+
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
@@ -67,6 +75,8 @@ class LiveForegroundService : Service() {
             .setContentTitle("AdoetzGPT Live is listening")
             .setContentText("Gemini Live microphone session is active.")
             .setContentIntent(pendingIntent)
+            .addAction(muteAction)
+            .addAction(endAction)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .build()
@@ -108,5 +118,7 @@ class LiveForegroundService : Service() {
     companion object {
         private const val CHANNEL_ID = "adoetzgpt_live"
         private const val NOTIFICATION_ID = 3117
+        const val ACTION_TOGGLE_MIC = "com.adoetz.adoetzgpt2.ACTION_TOGGLE_MIC"
+        const val ACTION_END_LIVE = "com.adoetz.adoetzgpt2.ACTION_END_LIVE"
     }
 }

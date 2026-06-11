@@ -13,10 +13,14 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:mime/mime.dart';
 import 'package:provider/provider.dart';
+import 'package:archive/archive.dart';
 
 import '../models.dart';
 import '../services/ai_service.dart';
 import '../state/app_state.dart';
+import '../utils/artifact_parser.dart';
+import '../utils/download_helper.dart';
+import '../widgets/artifact_preview.dart';
 import '../translations.dart';
 import '../ui/app_theme.dart';
 import '../widgets/live_camera_feed.dart';
@@ -847,11 +851,41 @@ class _ThoughtBlockState extends State<_ThoughtBlock> {
   }
 }
 
-class _MarkdownMessage extends StatelessWidget {
+class _MarkdownMessage extends StatefulWidget {
   const _MarkdownMessage({required this.data, required this.palette});
 
   final String data;
   final AppPalette palette;
+
+  @override
+  State<_MarkdownMessage> createState() => _MarkdownMessageState();
+}
+
+class _MarkdownMessageState extends State<_MarkdownMessage> {
+  bool _showPreview = false;
+  bool _isDownloading = false;
+
+  Future<void> _downloadZip(Map<String, String> files) async {
+    setState(() => _isDownloading = true);
+    try {
+      final archive = Archive();
+      for (final entry in files.entries) {
+        final bytes = utf8.encode(entry.value);
+        archive.addFile(ArchiveFile(entry.key, bytes.length, bytes));
+      }
+      final zipData = ZipEncoder().encode(archive);
+      await downloadFile('artifact_${DateTime.now().millisecondsSinceEpoch}.zip', zipData);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ZIP downloaded successfully!')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isDownloading = false);
+      }
+    }
+  }
 
   String _enhanceMathAndVariables(String text) {
     // 1. Apply the standalone variable formatter.
@@ -871,46 +905,105 @@ class _MarkdownMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final parts = _splitMarkdown(data);
+    final app = context.watch<AdoetzAppState>();
+    
+    Map<String, String>? files;
+    bool hasHtmlFiles = false;
+    
+    if (app.isArtifactMode) {
+      files = ArtifactParser.parseFiles(widget.data);
+      hasHtmlFiles = files.keys.any((k) => k.endsWith('.html'));
+    }
+
+    final parts = _splitMarkdown(widget.data);
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: parts.map((part) {
-        if (part.isCode) {
-          return _CopyableCodeBlock(
-            code: part.content,
-            language: part.language,
-            palette: palette,
-          );
-        }
-        if (part.content.trim().isEmpty) return const SizedBox.shrink();
-
-        final processedContent = _enhanceMathAndVariables(part.content);
-
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          child: MarkdownBody(
-            data: processedContent,
-            selectable: true,
-            styleSheet: _markdownStyle(context, palette),
-            builders: {
-              'code': _InlineCodeBuilder(palette),
-              'latex': LatexElementBuilder(
-                textStyle: TextStyle(color: palette.onSurface),
-              ),
-            },
-            extensionSet: md.ExtensionSet(
-              [
-                LatexBlockSyntax(),
-                ...md.ExtensionSet.gitHubFlavored.blockSyntaxes,
-              ],
-              [
-                LatexInlineSyntax(),
-                ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes,
+      children: [
+        if (app.isArtifactMode && hasHtmlFiles)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Row(
+              children: [
+                SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment(value: false, label: Text('Code')),
+                    ButtonSegment(value: true, label: Text('Preview')),
+                  ],
+                  selected: {_showPreview},
+                  onSelectionChanged: (set) {
+                    setState(() => _showPreview = set.first);
+                  },
+                  style: SegmentedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    textStyle: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                const Spacer(),
+                if (_isDownloading)
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  TextButton.icon(
+                    onPressed: () => _downloadZip(files!),
+                    icon: const Icon(LucideIcons.download, size: 16),
+                    label: const Text('Export ZIP'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: widget.palette.primary,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
               ],
             ),
           ),
-        );
-      }).toList(),
+          
+        if (_showPreview && files != null && hasHtmlFiles)
+          SizedBox(
+            height: 500,
+            child: ArtifactPreview(files: files),
+          )
+        else
+          ...parts.map((part) {
+            if (part.isCode) {
+              return _CopyableCodeBlock(
+                code: part.content,
+                language: part.language,
+                palette: widget.palette,
+              );
+            }
+            if (part.content.trim().isEmpty) return const SizedBox.shrink();
+
+            final processedContent = _enhanceMathAndVariables(part.content);
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: MarkdownBody(
+                data: processedContent,
+                selectable: true,
+                styleSheet: _markdownStyle(context, widget.palette),
+                builders: {
+                  'code': _InlineCodeBuilder(widget.palette),
+                  'latex': LatexElementBuilder(
+                    textStyle: TextStyle(color: widget.palette.onSurface),
+                  ),
+                },
+                extensionSet: md.ExtensionSet(
+                  [
+                    LatexBlockSyntax(),
+                    ...md.ExtensionSet.gitHubFlavored.blockSyntaxes,
+                  ],
+                  [
+                    LatexInlineSyntax(),
+                    ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes,
+                  ],
+                ),
+              ),
+            );
+          }),
+      ],
     );
   }
 
@@ -1460,7 +1553,7 @@ class _InputPod extends StatelessWidget {
                   iconSize: 17,
                   color: app.isThinkingMode
                       ? const Color(0xfffacc15)
-                      : p.onSurfaceVariant,
+                      : p.onSurface,
                   onPressed: app.toggleThinkingMode,
                 ),
                 RoundIconButton(
@@ -1469,7 +1562,7 @@ class _InputPod extends StatelessWidget {
                   iconSize: 17,
                   color: app.genSettings.webSearchMode != 'off'
                       ? p.primary
-                      : p.onSurfaceVariant,
+                      : p.onSurface,
                   onPressed: () => app.updateGenerationSettings(
                     app.genSettings.copyWith(
                       webSearchMode: app.genSettings.webSearchMode == 'off'
@@ -1484,39 +1577,44 @@ class _InputPod extends StatelessWidget {
                   iconSize: 17,
                   color: app.isArtifactMode
                       ? const Color(0xffc084fc)
-                      : p.onSurfaceVariant,
+                      : p.onSurface,
                   onPressed: app.toggleArtifactMode,
                 ),
                 const SizedBox(width: 12),
-
-                SizedBox(
-                  width: compact ? 74 : 132,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: SizedBox(
-                      height: 4,
-                      child: LinearProgressIndicator(
-                        value: contextRatio,
-                        backgroundColor: p.onSurface.withValues(alpha: 0.08),
-                        valueColor: AlwaysStoppedAnimation<Color>(contextColor),
-                      ),
-                    ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: p.onSurface.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                ),
-                const SizedBox(width: 12),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(minWidth: 64, maxWidth: 88),
-                  child: Text(
-                    '${formatTokenCount(liveTokens)} / ${formatTokenCount(contextMax)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      color: p.onSurfaceVariant.withValues(alpha: 0.68),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${formatTokenCount(liveTokens)} / ${formatTokenCount(contextMax)}',
+                        style: TextStyle(
+                          color: p.onSurface,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      SizedBox(
+                        width: compact ? 50 : 70,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(2),
+                          child: SizedBox(
+                            height: 3,
+                            child: LinearProgressIndicator(
+                              value: contextRatio,
+                              backgroundColor: p.onSurface.withValues(alpha: 0.08),
+                              valueColor: AlwaysStoppedAnimation<Color>(contextColor),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -1531,7 +1629,7 @@ class _InputPod extends StatelessWidget {
                 RoundIconButton(
                   icon: LucideIcons.plus,
                   onPressed: onPick,
-                  color: p.onSurfaceVariant,
+                  color: p.onSurface,
                 ),
                 Expanded(
                   child: Container(
@@ -1568,7 +1666,7 @@ class _InputPod extends StatelessWidget {
                 RoundIconButton(
                   icon: LucideIcons.mic,
                   onPressed: onSend,
-                  color: p.onSurfaceVariant,
+                  color: p.onSurface,
                 ),
                 const SizedBox(width: 4),
                 SizedBox(

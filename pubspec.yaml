@@ -67,6 +67,8 @@ dependencies:
   camera: any
   camera_web: ^0.3.4
   audioplayers: ^6.1.0
+  webview_flutter: ^4.8.0
+  webview_flutter_web: ^0.2.3
 dev_dependencies:
   flutter_test:
     sdk: flutter

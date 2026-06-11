@@ -19,6 +19,20 @@ class MainActivity : FlutterActivity() {
     private var audioTrack: AudioTrack? = null
     private var audioExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var previousAudioMode: Int? = null
+    private var foregroundChannel: MethodChannel? = null
+
+    private val actionReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                LiveForegroundService.ACTION_TOGGLE_MIC -> {
+                    foregroundChannel?.invokeMethod("onAction", "toggle_mic")
+                }
+                LiveForegroundService.ACTION_END_LIVE -> {
+                    foregroundChannel?.invokeMethod("onAction", "end_live")
+                }
+            }
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -50,10 +64,11 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
-        MethodChannel(
+        foregroundChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             liveForegroundChannel
-        ).setMethodCallHandler { call, result ->
+        )
+        foregroundChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "start" -> {
                     val intent = Intent(this, LiveForegroundService::class.java)
@@ -70,6 +85,16 @@ class MainActivity : FlutterActivity() {
                 }
                 else -> result.notImplemented()
             }
+        }
+
+        val filter = android.content.IntentFilter().apply {
+            addAction(LiveForegroundService.ACTION_TOGGLE_MIC)
+            addAction(LiveForegroundService.ACTION_END_LIVE)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(actionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(actionReceiver, filter)
         }
     }
 
@@ -123,6 +148,9 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        try {
+            unregisterReceiver(actionReceiver)
+        } catch (_: Exception) {}
         stopPcmPlayback()
         audioExecutor.shutdownNow()
         super.onDestroy()

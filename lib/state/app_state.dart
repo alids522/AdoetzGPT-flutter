@@ -132,6 +132,16 @@ class AdoetzAppState extends ChangeNotifier {
 
     initialized = true;
     notifyListeners();
+
+    LiveForegroundService.initialize();
+    LiveForegroundService.onAction = (action) {
+      if (action == 'end_live') {
+        stopLiveConversation();
+      } else if (action == 'toggle_mic') {
+        toggleLiveRecording();
+      }
+    };
+
     unawaited(fetchModels());
     unawaited(_persist());
     unawaited(_pullRemoteStateAfterStartup());
@@ -688,7 +698,7 @@ class AdoetzAppState extends ChangeNotifier {
     Timer? typingTimer;
 
     void startTypingTimer() {
-      typingTimer ??= Timer.periodic(const Duration(milliseconds: 20), (timer) {
+      typingTimer ??= Timer.periodic(const Duration(milliseconds: 50), (timer) {
         if (!isGenerating) {
           timer.cancel();
           typingTimer = null;
@@ -700,7 +710,7 @@ class AdoetzAppState extends ChangeNotifier {
 
         if (displayedBotText.length < fullBotText.length) {
           int diff = fullBotText.length - displayedBotText.length;
-          int charsToAdd = (diff / 6).ceil().clamp(1, 15);
+          int charsToAdd = (diff / 4).ceil().clamp(1, 40);
           displayedBotText = fullBotText.substring(
             0,
             displayedBotText.length + charsToAdd,

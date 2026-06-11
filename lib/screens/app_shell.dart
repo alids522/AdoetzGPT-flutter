@@ -52,7 +52,10 @@ class _AppShellState extends State<AppShell> {
           _lastBackPressTime = now;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Press back again to exit app'),
+              content: const Text(
+                'Press back again to exit app',
+                style: TextStyle(color: Colors.white),
+              ),
               duration: const Duration(seconds: 2),
               behavior: SnackBarBehavior.floating,
               backgroundColor: p.isDark
@@ -231,10 +234,10 @@ class _HeaderState extends State<_Header> {
           if (app.syncSettings.enabled && app.syncStatus.isNotEmpty) ...[
             Tooltip(
               message: app.syncStatus,
-              child: Icon(
-                LucideIcons.database,
-                size: 16,
+              child: _SyncStatusIcon(
+                status: app.syncStatus,
                 color: p.onSurfaceVariant.withValues(alpha: 0.72),
+                onTap: () => app.syncNow(),
               ),
             ),
             const SizedBox(width: 8),
@@ -1248,5 +1251,105 @@ class _SessionTile extends StatelessWidget {
       controller.dispose();
       if (title != null) app.renameSession(session.id, title);
     }
+  }
+}
+
+class _SyncStatusIcon extends StatefulWidget {
+  final String status;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _SyncStatusIcon({
+    required this.status,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  State<_SyncStatusIcon> createState() => _SyncStatusIconState();
+}
+
+class _SyncStatusIconState extends State<_SyncStatusIcon>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    _opacity = Tween<double>(begin: 0.3, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+    _updateAnimation();
+  }
+
+  @override
+  void didUpdateWidget(_SyncStatusIcon oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.status != widget.status) {
+      _updateAnimation();
+    }
+  }
+
+  void _updateAnimation() {
+    final lower = widget.status.toLowerCase();
+    final isSyncing = lower.contains('syncing') ||
+        lower.contains('connecting') ||
+        lower.contains('pulling');
+    if (isSyncing) {
+      _controller.repeat(reverse: true);
+    } else {
+      _controller.stop();
+      _controller.value = 1.0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final lower = widget.status.toLowerCase();
+    Color iconColor = widget.color;
+    final isSyncing = lower.contains('syncing') ||
+        lower.contains('connecting') ||
+        lower.contains('pulling');
+        
+    if (isSyncing) {
+      iconColor = Colors.blue;
+    } else if (lower.contains('success') || lower.contains('loaded') || lower.contains('saved')) {
+      iconColor = Colors.green;
+    } else if (lower.contains('fail') || lower.contains('error') || lower.contains('disconnect')) {
+      iconColor = Colors.red;
+    }
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.all(4.0),
+        child: AnimatedBuilder(
+          animation: _opacity,
+          builder: (context, child) {
+            return Opacity(
+              opacity: isSyncing ? _opacity.value : 1.0,
+              child: child,
+            );
+          },
+          child: Icon(
+            LucideIcons.database,
+            size: 16,
+            color: iconColor,
+          ),
+        ),
+      ),
+    );
   }
 }
