@@ -1307,15 +1307,14 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
                     launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
                   }
                 },
-                sizedImageBuilder: (uri, title, alt, width, height) {
+                // ignore: deprecated_member_use
+                imageBuilder: (uri, title, alt) {
                   if (uri.scheme == 'data') {
                     try {
                       final bytes = uri.data?.contentAsBytes();
                       if (bytes != null) {
                         return Image.memory(
                           bytes,
-                          width: width,
-                          height: height,
                           errorBuilder: (context, error, stackTrace) =>
                               const Icon(Icons.broken_image, color: Colors.grey),
                         );
@@ -1324,8 +1323,6 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
                   }
                   return Image.network(
                     uri.toString(),
-                    width: width,
-                    height: height,
                     errorBuilder: (context, error, stackTrace) =>
                         const Icon(Icons.broken_image, color: Colors.grey),
                   );
