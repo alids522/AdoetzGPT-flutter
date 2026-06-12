@@ -214,6 +214,36 @@ class AiService {
     }
   }
 
+  Future<void> pingEndpoint({
+    required EndpointConfig endpoint,
+    required SyncSettings syncSettings,
+  }) async {
+    if (endpoint.url.trim().isEmpty) {
+      throw Exception('Endpoint URL is empty.');
+    }
+    final headers = <String, String>{'Content-Type': 'application/json'};
+    if (endpoint.key.trim().isNotEmpty && endpoint.key != 'sk-...') {
+      headers['Authorization'] = 'Bearer ${endpoint.key}';
+    }
+    final payload = {
+      'model': endpoint.models.isNotEmpty ? endpoint.models.first : 'hermes-agent',
+      'messages': [{'role': 'user', 'content': 'ping'}],
+      'max_tokens': 1,
+    };
+    final request = http.Request(
+      'POST',
+      Uri.parse('${_endpointBase(endpoint.url)}/chat/completions'),
+    )
+      ..headers.addAll(headers)
+      ..body = jsonEncode(payload);
+
+    final streamed = await _sendWithProxyFallback(request, syncSettings);
+    if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+      final body = await streamed.stream.bytesToString();
+      throw Exception(_extractApiError(body, 'Ping failed (${streamed.statusCode})'));
+    }
+  }
+
   Future<GeneratedResponse> sendMessage({
     required String prompt,
     required List<AttachmentData> attachments,

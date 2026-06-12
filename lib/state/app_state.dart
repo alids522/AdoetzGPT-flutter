@@ -781,12 +781,26 @@ class AdoetzAppState extends ChangeNotifier {
       ),
     );
     try {
-      await _ai
-          .fetchAvailableModelsForEndpoint(
-            endpoint: _endpointForConnector(connector),
-            syncSettings: syncSettings,
-          )
-          .timeout(const Duration(seconds: 12));
+      try {
+        await _ai
+            .fetchAvailableModelsForEndpoint(
+              endpoint: _endpointForConnector(connector),
+              syncSettings: syncSettings,
+            )
+            .timeout(const Duration(seconds: 12));
+      } catch (e) {
+        // Fallback for servers like Hermes that return 500/404 for /models
+        if (e.toString().contains('500') || e.toString().contains('404')) {
+          await _ai
+              .pingEndpoint(
+                endpoint: _endpointForConnector(connector),
+                syncSettings: syncSettings,
+              )
+              .timeout(const Duration(seconds: 12));
+        } else {
+          rethrow;
+        }
+      }
       final latency = DateTime.now().difference(started).inMilliseconds;
       _updateConnector(
         id,
@@ -826,12 +840,30 @@ class AdoetzAppState extends ChangeNotifier {
         .firstOrNull;
     if (connector == null) return;
     try {
-      final names = await _ai
-          .fetchAvailableModelsForEndpoint(
-            endpoint: _endpointForConnector(connector),
-            syncSettings: syncSettings,
-          )
-          .timeout(const Duration(seconds: 16));
+      List<String> names = [];
+      try {
+        names = await _ai
+            .fetchAvailableModelsForEndpoint(
+              endpoint: _endpointForConnector(connector),
+              syncSettings: syncSettings,
+            )
+            .timeout(const Duration(seconds: 16));
+      } catch (e) {
+        if (e.toString().contains('500') || e.toString().contains('404')) {
+          await _ai
+              .pingEndpoint(
+                endpoint: _endpointForConnector(connector),
+                syncSettings: syncSettings,
+              )
+              .timeout(const Duration(seconds: 16));
+          // If ping succeeds, use existing targets or default to agent name
+          names = connector.targets.isNotEmpty 
+              ? connector.targets.map((t) => t.modelId).toList()
+              : ['hermes-agent'];
+        } else {
+          rethrow;
+        }
+      }
       final now = DateTime.now().millisecondsSinceEpoch;
       final targets = names
           .where((name) => name.trim().isNotEmpty)
