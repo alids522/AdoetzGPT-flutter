@@ -456,9 +456,7 @@ class AiService {
       'messages': messages,
       'stream': true,
       'stream_options': {'include_usage': true},
-      if (genSettings.temperature != 0.7) 'temperature': genSettings.temperature,
-      if (genSettings.topP != 0.9) 'top_p': genSettings.topP,
-      'max_tokens': genSettings.maxTokens,
+      'max_tokens': 4096,
     };
 
     final request =
