@@ -1738,7 +1738,7 @@ class _ActionBar extends StatelessWidget {
   }
 }
 
-class _SettingField extends StatelessWidget {
+class _SettingField extends StatefulWidget {
   const _SettingField({
     required this.label,
     required this.initialValue,
@@ -1758,25 +1758,57 @@ class _SettingField extends StatelessWidget {
   final ValueChanged<String> onChanged;
 
   @override
+  State<_SettingField> createState() => _SettingFieldState();
+}
+
+class _SettingFieldState extends State<_SettingField> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue);
+  }
+
+  @override
+  void didUpdateWidget(covariant _SettingField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialValue != widget.initialValue &&
+        _controller.text != widget.initialValue) {
+      final currentSelection = _controller.selection;
+      _controller.text = widget.initialValue;
+      if (currentSelection.isValid && currentSelection.baseOffset <= widget.initialValue.length) {
+        _controller.selection = currentSelection;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label.toUpperCase(), style: _labelStyle(context)),
+        Text(widget.label.toUpperCase(), style: _labelStyle(context)),
         const SizedBox(height: 7),
         TextFormField(
-          key: ValueKey('$label-$initialValue'),
-          initialValue: initialValue,
-          obscureText: obscure,
-          minLines: minLines,
-          maxLines: obscure ? 1 : maxLines,
-          decoration: InputDecoration(hintText: hint),
-          onChanged: onChanged,
+          controller: _controller,
+          obscureText: widget.obscure,
+          minLines: widget.minLines,
+          maxLines: widget.obscure ? 1 : widget.maxLines,
+          decoration: InputDecoration(hintText: widget.hint),
+          onChanged: widget.onChanged,
         ),
       ],
     );
   }
 }
+
 
 class _DropdownSetting extends StatelessWidget {
   const _DropdownSetting({
