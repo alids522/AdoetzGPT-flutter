@@ -46,6 +46,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final _speechToText = SpeechToText();
   bool _speechEnabled = false;
   bool _isListening = false;
+  bool _dictationHoldActive = false;
+  bool _dictationRestarting = false;
   final ValueNotifier<double> _soundLevel = ValueNotifier(0.0);
   String _preDictationText = '';
 
@@ -53,18 +55,27 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     scrollController.addListener(_onScroll);
-    _initSpeech();
+    unawaited(_initSpeech());
   }
 
-  void _initSpeech() async {
+  Future<void> _initSpeech() async {
     _speechEnabled = await _speechToText.initialize(
       onStatus: (status) {
         if (status == 'done' || status == 'notListening') {
+          if (_dictationHoldActive) {
+            _restartHeldDictation();
+            return;
+          }
           if (mounted) setState(() => _isListening = false);
           _soundLevel.value = 0.0;
         }
       },
       onError: (errorNotification) {
+        if (_dictationHoldActive && !errorNotification.permanent) {
+          _restartHeldDictation();
+          return;
+        }
+        _dictationHoldActive = false;
         if (mounted) setState(() => _isListening = false);
         _soundLevel.value = 0.0;
       },
@@ -72,34 +83,94 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     if (mounted) setState(() {});
   }
 
-  void _toggleDictation() async {
+  Future<void> _toggleDictation() async {
     if (_isListening) {
-      await _speechToText.stop();
+      await _stopDictation();
+    } else {
+      await _startDictation();
+    }
+  }
+
+  Future<void> _startHeldDictation() {
+    _dictationHoldActive = true;
+    return _startDictation(holdMode: true);
+  }
+
+  Future<void> _stopDictation({bool cancel = false}) async {
+    _dictationHoldActive = false;
+    _dictationRestarting = false;
+    try {
+      if (cancel) {
+        await _speechToText.cancel();
+      } else {
+        await _speechToText.stop();
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _isListening = false);
+    _soundLevel.value = 0.0;
+  }
+
+  Future<void> _startDictation({bool holdMode = false}) async {
+    if (_isListening) {
+      _dictationHoldActive = holdMode || _dictationHoldActive;
+      return;
+    }
+    if (!_speechEnabled) {
+      await _initSpeech();
+    }
+    if (!_speechEnabled) return;
+    _dictationHoldActive = holdMode;
+    _preDictationText = input.text;
+    if (mounted) setState(() => _isListening = true);
+    await _listenForDictation();
+  }
+
+  Future<void> _listenForDictation() async {
+    final spacer =
+        _preDictationText.isNotEmpty && !_preDictationText.endsWith(' ')
+        ? ' '
+        : '';
+    try {
+      await _speechToText.listen(
+        listenOptions: SpeechListenOptions(
+          partialResults: true,
+          cancelOnError: false,
+          listenMode: ListenMode.dictation,
+          listenFor: const Duration(minutes: 30),
+          pauseFor: const Duration(seconds: 30),
+        ),
+        onResult: (result) {
+          if (!mounted) return;
+          setState(() {
+            input.text = _preDictationText + spacer + result.recognizedWords;
+            input.selection = TextSelection.fromPosition(
+              TextPosition(offset: input.text.length),
+            );
+          });
+        },
+        onSoundLevelChange: (level) {
+          _soundLevel.value = level;
+        },
+      );
+    } catch (_) {
       if (mounted) setState(() => _isListening = false);
       _soundLevel.value = 0.0;
-    } else {
-      if (!_speechEnabled) {
-        _initSpeech();
-      }
-      if (_speechEnabled) {
-        _preDictationText = input.text;
-        final spacer = _preDictationText.isNotEmpty && !_preDictationText.endsWith(' ') ? ' ' : '';
-        if (mounted) setState(() => _isListening = true);
-        await _speechToText.listen(
-          onResult: (result) {
-            if (mounted) {
-              setState(() {
-                input.text = _preDictationText + spacer + result.recognizedWords;
-                input.selection = TextSelection.fromPosition(TextPosition(offset: input.text.length));
-              });
-            }
-          },
-          onSoundLevelChange: (level) {
-            _soundLevel.value = level;
-          },
-        );
-      }
     }
+  }
+
+  Future<void> _restartHeldDictation() async {
+    if (_dictationRestarting) return;
+    _dictationRestarting = true;
+    if (mounted) setState(() => _isListening = false);
+    await Future<void>.delayed(const Duration(milliseconds: 140));
+    if (!mounted || !_dictationHoldActive) {
+      _dictationRestarting = false;
+      _soundLevel.value = 0.0;
+      return;
+    }
+    if (mounted) setState(() => _isListening = true);
+    await _listenForDictation();
+    _dictationRestarting = false;
   }
 
   void _onScroll() {
@@ -114,7 +185,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    _speechToText.stop();
+    _dictationHoldActive = false;
+    unawaited(_speechToText.stop());
     _soundLevel.dispose();
     input.dispose();
     scrollController.removeListener(_onScroll);
@@ -126,7 +198,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AdoetzAppState>();
-    if (app.isLiveVideoEnabled) {
+    if (app.isLiveVideoEnabled && (app.isLiveActive || app.isLiveConnecting)) {
       return _LiveVideoStage(app: app);
     }
 
@@ -170,7 +242,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       curve: Curves.easeOut,
                     );
                   },
-                  child: Icon(LucideIcons.arrowDown, color: p.onSurface, size: 20),
+                  child: Icon(
+                    LucideIcons.arrowDown,
+                    color: p.onSurface,
+                    size: 20,
+                  ),
                 ),
                 if (app.isGenerating)
                   Positioned(
@@ -229,11 +305,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                     child: SizedBox(
                       width: double.infinity,
                       child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 600),
-                        reverseDuration: const Duration(milliseconds: 400),
-                        switchInCurve: Curves
-                            .easeOutBack, // Mimics spring stiffness 400 damping 15
-                        switchOutCurve: Curves.easeIn,
+                        duration: const Duration(milliseconds: 180),
+                        reverseDuration: const Duration(milliseconds: 140),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
                         transitionBuilder: (child, animation) {
                           final isIncoming =
                               child.key ==
@@ -246,11 +321,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                             builder: (context, childWidget) {
                               final offsetY = isIncoming
                                   ? Tween<double>(
-                                      begin: 80.0,
+                                      begin: 18.0,
                                       end: 0.0,
                                     ).evaluate(animation)
                                   : Tween<double>(
-                                      begin: -80.0,
+                                      begin: -12.0,
                                       end: 0.0,
                                     ).evaluate(animation);
                               return Transform.translate(
@@ -283,7 +358,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                 attachments: attachments,
                                 isListening: _isListening,
                                 soundLevelNotifier: _soundLevel,
-                                onToggleDictation: _toggleDictation,
+                                onToggleDictation: () =>
+                                    unawaited(_toggleDictation()),
+                                onStartDictation: () =>
+                                    unawaited(_startHeldDictation()),
+                                onStopDictation: () =>
+                                    unawaited(_stopDictation()),
                                 onPick: _showAttachMenu,
                                 onSend: _sendOrLive,
                               ),
@@ -315,7 +395,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     input.clear();
     setState(attachments.clear);
     if (_isListening) {
-      _toggleDictation();
+      unawaited(_stopDictation());
     }
     app.sendMessage(text, files);
     Future.delayed(const Duration(milliseconds: 120), () {
@@ -416,19 +496,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       final mime =
           lookupMimeType(file.name, headerBytes: bytes) ??
           'application/octet-stream';
-          
-      if (mime == 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+
+      if (mime == 'application/pdf' ||
+          file.name.toLowerCase().endsWith('.pdf')) {
         try {
           final document = PdfDocument(inputBytes: bytes);
           final textExtractor = PdfTextExtractor(document);
           final text = textExtractor.extractText();
           document.dispose();
           attachments.add(
-            AttachmentData(
-              name: file.name,
-              type: 'text/extracted',
-              data: text,
-            ),
+            AttachmentData(name: file.name, type: 'text/extracted', data: text),
           );
         } catch (e) {
           if (mounted) {
@@ -437,24 +514,32 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             );
           }
         }
-      } else if (mime.startsWith('text/') || mime == 'application/json' || file.name.toLowerCase().endsWith('.md') || file.name.toLowerCase().endsWith('.csv') || file.name.toLowerCase().endsWith('.txt')) {
+      } else if (mime.startsWith('text/') ||
+          mime == 'application/json' ||
+          file.name.toLowerCase().endsWith('.md') ||
+          file.name.toLowerCase().endsWith('.csv') ||
+          file.name.toLowerCase().endsWith('.txt')) {
         try {
           final text = utf8.decode(bytes);
           attachments.add(
-            AttachmentData(
-              name: file.name,
-              type: 'text/extracted',
-              data: text,
-            ),
+            AttachmentData(name: file.name, type: 'text/extracted', data: text),
           );
         } catch (e) {
           attachments.add(
-            AttachmentData(name: file.name, type: mime, data: base64Encode(bytes)),
+            AttachmentData(
+              name: file.name,
+              type: mime,
+              data: base64Encode(bytes),
+            ),
           );
         }
       } else {
         attachments.add(
-          AttachmentData(name: file.name, type: mime, data: base64Encode(bytes)),
+          AttachmentData(
+            name: file.name,
+            type: mime,
+            data: base64Encode(bytes),
+          ),
         );
       }
     }
@@ -660,6 +745,7 @@ class _MessageBubble extends StatelessWidget {
     final maxWidth = message.isUser
         ? math.min(620.0, laneWidth * 0.72)
         : laneWidth;
+    final animateBubble = message.isUser && !editing;
 
     final bubble = Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
@@ -667,9 +753,9 @@ class _MessageBubble extends StatelessWidget {
         crossAxisAlignment: align,
         children: [
           TweenAnimationBuilder<double>(
-            tween: Tween<double>(begin: 0.0, end: 1.0),
-            duration: const Duration(milliseconds: 460),
-            curve: Curves.easeOutBack,
+            tween: Tween<double>(begin: animateBubble ? 0.0 : 1.0, end: 1.0),
+            duration: Duration(milliseconds: animateBubble ? 460 : 1),
+            curve: animateBubble ? Curves.easeOutBack : Curves.linear,
             builder: (context, value, child) {
               final radius = message.isUser
                   ? BorderRadius.only(
@@ -680,12 +766,12 @@ class _MessageBubble extends StatelessWidget {
                     )
                   : null;
               return Transform.scale(
-                scale: 0.2 + 0.8 * value,
+                scale: animateBubble ? 0.2 + 0.8 * value : 1.0,
                 alignment: message.isUser
                     ? Alignment.bottomRight
                     : Alignment.bottomLeft,
                 child: Opacity(
-                  opacity: value.clamp(0.0, 1.0),
+                  opacity: animateBubble ? value.clamp(0.0, 1.0) : 1.0,
                   child: ConstrainedBox(
                     constraints: BoxConstraints(maxWidth: maxWidth),
                     child: Container(
@@ -765,15 +851,28 @@ class _MessageBubble extends StatelessWidget {
                           ),
                           child: _PolygonProgressionLoading(),
                         )
-                      else if (app.isGenerating && 
-                          parsed.mainContent.length < 150 && 
+                      else if (app.isGenerating &&
+                          parsed.mainContent.length < 150 &&
                           !parsed.mainContent.contains('\n') &&
-                          (parsed.mainContent.toLowerCase().startsWith('searching') ||
-                           parsed.mainContent.toLowerCase().startsWith('reading') ||
-                           parsed.mainContent.toLowerCase().startsWith('extracting') ||
-                           parsed.mainContent.toLowerCase().startsWith('connected') ||
-                           parsed.mainContent.toLowerCase().startsWith('connecting')))
-                        _SearchStatusPill(status: parsed.mainContent, palette: p)
+                          (parsed.mainContent.toLowerCase().startsWith(
+                                'searching',
+                              ) ||
+                              parsed.mainContent.toLowerCase().startsWith(
+                                'reading',
+                              ) ||
+                              parsed.mainContent.toLowerCase().startsWith(
+                                'extracting',
+                              ) ||
+                              parsed.mainContent.toLowerCase().startsWith(
+                                'connected',
+                              ) ||
+                              parsed.mainContent.toLowerCase().startsWith(
+                                'connecting',
+                              )))
+                        _SearchStatusPill(
+                          status: parsed.mainContent,
+                          palette: p,
+                        )
                       else
                         _MarkdownMessage(data: parsed.mainContent, palette: p),
                     ],
@@ -864,10 +963,7 @@ class _MessageBubble extends StatelessWidget {
           padding: const EdgeInsets.only(right: 20),
           child: Icon(LucideIcons.gitBranch, color: p.primary, size: 24),
         ),
-        child: SizedBox(
-          width: double.infinity,
-          child: bubble,
-        ),
+        child: SizedBox(width: double.infinity, child: bubble),
       );
     }
 
@@ -1020,7 +1116,10 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
         archive.addFile(ArchiveFile(entry.key, bytes.length, bytes));
       }
       final zipData = ZipEncoder().encode(archive);
-      await downloadFile('artifact_${DateTime.now().millisecondsSinceEpoch}.zip', zipData);
+      await downloadFile(
+        'artifact_${DateTime.now().millisecondsSinceEpoch}.zip',
+        zipData,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('ZIP downloaded successfully!')),
@@ -1052,17 +1151,17 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AdoetzAppState>();
-    
+
     Map<String, String>? files;
     bool hasHtmlFiles = false;
-    
+
     if (app.isArtifactMode) {
       files = ArtifactParser.parseFiles(widget.data);
       hasHtmlFiles = files.keys.any((k) => k.endsWith('.html'));
     }
 
     final parts = _splitMarkdown(widget.data);
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1105,12 +1204,9 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
               ],
             ),
           ),
-          
+
         if (_showPreview && files != null && hasHtmlFiles)
-          SizedBox(
-            height: 500,
-            child: ArtifactPreview(files: files),
-          )
+          SizedBox(height: 500, child: ArtifactPreview(files: files))
         else
           ...parts.map((part) {
             if (part.isCode) {
@@ -1429,11 +1525,32 @@ class _CopyableCodeBlock extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Container(width: 11, height: 11, decoration: const BoxDecoration(color: Color(0xFFFF5F56), shape: BoxShape.circle)),
+                    Container(
+                      width: 11,
+                      height: 11,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFFF5F56),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
                     const SizedBox(width: 6),
-                    Container(width: 11, height: 11, decoration: const BoxDecoration(color: Color(0xFFFFBD2E), shape: BoxShape.circle)),
+                    Container(
+                      width: 11,
+                      height: 11,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFFFBD2E),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
                     const SizedBox(width: 6),
-                    Container(width: 11, height: 11, decoration: const BoxDecoration(color: Color(0xFF27C93F), shape: BoxShape.circle)),
+                    Container(
+                      width: 11,
+                      height: 11,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF27C93F),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(width: 14),
@@ -1526,7 +1643,8 @@ class _SearchStatusPill extends StatefulWidget {
   State<_SearchStatusPill> createState() => _SearchStatusPillState();
 }
 
-class _SearchStatusPillState extends State<_SearchStatusPill> with SingleTickerProviderStateMixin {
+class _SearchStatusPillState extends State<_SearchStatusPill>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
 
   @override
@@ -1556,25 +1674,25 @@ class _SearchStatusPillState extends State<_SearchStatusPill> with SingleTickerP
             color: widget.palette.surfaceDim,
             borderRadius: BorderRadius.circular(24),
             border: Border.all(
-              color: widget.palette.primary.withValues(alpha: 0.3 + 0.3 * _controller.value),
+              color: widget.palette.primary.withValues(
+                alpha: 0.3 + 0.3 * _controller.value,
+              ),
               width: 1.5,
             ),
             boxShadow: [
               BoxShadow(
-                color: widget.palette.primary.withValues(alpha: 0.1 * _controller.value),
+                color: widget.palette.primary.withValues(
+                  alpha: 0.1 * _controller.value,
+                ),
                 blurRadius: 12,
                 spreadRadius: 2,
-              )
+              ),
             ],
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                LucideIcons.search,
-                size: 16,
-                color: widget.palette.primary,
-              ),
+              Icon(LucideIcons.search, size: 16, color: widget.palette.primary),
               const SizedBox(width: 12),
               Flexible(
                 child: Text(
@@ -1748,6 +1866,8 @@ class _InputPod extends StatelessWidget {
     required this.isListening,
     required this.soundLevelNotifier,
     required this.onToggleDictation,
+    required this.onStartDictation,
+    required this.onStopDictation,
     required this.onPick,
     required this.onSend,
   });
@@ -1757,6 +1877,8 @@ class _InputPod extends StatelessWidget {
   final bool isListening;
   final ValueNotifier<double> soundLevelNotifier;
   final VoidCallback onToggleDictation;
+  final VoidCallback onStartDictation;
+  final VoidCallback onStopDictation;
   final VoidCallback onPick;
   final VoidCallback onSend;
 
@@ -1784,191 +1906,203 @@ class _InputPod extends StatelessWidget {
         p.error;
     final inner = Column(
       children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 6, 16, 5),
-            child: Row(
-              children: [
-                RoundIconButton(
-                  icon: LucideIcons.lightbulb,
-                  size: 30,
-                  iconSize: 17,
-                  color: app.isThinkingMode
-                      ? const Color(0xfffacc15)
-                      : p.onSurface,
-                  onPressed: app.toggleThinkingMode,
-                ),
-                RoundIconButton(
-                  icon: LucideIcons.globe,
-                  size: 30,
-                  iconSize: 17,
-                  color: app.genSettings.webSearchMode != 'off'
-                      ? p.primary
-                      : p.onSurface,
-                  onPressed: () => app.updateGenerationSettings(
-                    app.genSettings.copyWith(
-                      webSearchMode: app.genSettings.webSearchMode == 'off'
-                          ? 'on'
-                          : 'off',
-                    ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 5),
+          child: Row(
+            children: [
+              RoundIconButton(
+                icon: LucideIcons.lightbulb,
+                size: 30,
+                iconSize: 17,
+                color: app.isThinkingMode
+                    ? const Color(0xfffacc15)
+                    : p.onSurface,
+                onPressed: app.toggleThinkingMode,
+              ),
+              RoundIconButton(
+                icon: LucideIcons.globe,
+                size: 30,
+                iconSize: 17,
+                color: app.genSettings.webSearchMode != 'off'
+                    ? p.primary
+                    : p.onSurface,
+                onPressed: () => app.updateGenerationSettings(
+                  app.genSettings.copyWith(
+                    webSearchMode: app.genSettings.webSearchMode == 'off'
+                        ? 'on'
+                        : 'off',
                   ),
                 ),
-                RoundIconButton(
-                  icon: LucideIcons.sparkles,
-                  size: 30,
-                  iconSize: 17,
-                  color: app.isArtifactMode
-                      ? const Color(0xffc084fc)
-                      : p.onSurface,
-                  onPressed: app.toggleArtifactMode,
+              ),
+              RoundIconButton(
+                icon: LucideIcons.sparkles,
+                size: 30,
+                iconSize: 17,
+                color: app.isArtifactMode
+                    ? const Color(0xffc084fc)
+                    : p.onSurface,
+                onPressed: app.toggleArtifactMode,
+              ),
+              const SizedBox(width: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
                 ),
-                const SizedBox(width: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: p.onSurface.withValues(alpha: 0.05),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '${formatTokenCount(liveTokens)} / ${formatTokenCount(contextMax)}',
-                        style: TextStyle(
-                          color: p.onSurface,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      SizedBox(
-                        width: compact ? 50 : 70,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(2),
-                          child: SizedBox(
-                            height: 3,
-                            child: LinearProgressIndicator(
-                              value: contextRatio,
-                              backgroundColor: p.onSurface.withValues(alpha: 0.08),
-                              valueColor: AlwaysStoppedAnimation<Color>(contextColor),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                decoration: BoxDecoration(
+                  color: p.onSurface.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-              ],
-            ),
-          ),
-          Divider(height: 1, color: p.outline),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 4, 8, 5),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                RoundIconButton(
-                  icon: LucideIcons.plus,
-                  onPressed: onPick,
-                  color: p.onSurface,
-                ),
-                Expanded(
-                  child: Container(
-                    constraints: BoxConstraints(
-                      minHeight: 40,
-                      maxHeight: compact ? 68 : 96,
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: TextField(
-                      controller: input,
-                      minLines: 1,
-                      maxLines: compact ? 2 : 4,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${formatTokenCount(liveTokens)} / ${formatTokenCount(contextMax)}',
                       style: TextStyle(
                         color: p.onSurface,
-                        fontSize: 15,
-                        height: 1.32,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        fontFeatures: const [FontFeature.tabularFigures()],
                       ),
-                      decoration: InputDecoration(
-                        filled: false,
-                        hintText: copy.t('chat', 'placeholder'),
-                        hintStyle: TextStyle(
-                          color: p.onSurfaceVariant.withValues(alpha: 0.55),
-                        ),
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 7),
-                      ),
-                      onSubmitted: (_) => onSend(),
                     ),
-                  ),
-                ),
-                isListening
-                    ? GestureDetector(
-                        onTap: onToggleDictation,
-                        child: Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: p.error.withValues(alpha: 0.15),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Center(
-                            child: ValueListenableBuilder<double>(
-                              valueListenable: soundLevelNotifier,
-                              builder: (context, soundLevel, _) {
-                                return AnimatedContainer(
-                                  duration: const Duration(milliseconds: 100),
-                                  width: 12 + (soundLevel * 0.4).clamp(0.0, 20.0),
-                                  height: 12 + (soundLevel * 0.4).clamp(0.0, 20.0),
-                                  decoration: BoxDecoration(
-                                    color: p.error,
-                                    shape: BoxShape.circle,
-                                  ),
-                                );
-                              },
+                    const SizedBox(height: 3),
+                    SizedBox(
+                      width: compact ? 50 : 70,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(2),
+                        child: SizedBox(
+                          height: 3,
+                          child: LinearProgressIndicator(
+                            value: contextRatio,
+                            backgroundColor: p.onSurface.withValues(
+                              alpha: 0.08,
+                            ),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              contextColor,
                             ),
                           ),
                         ),
-                      )
-                    : RoundIconButton(
-                        icon: LucideIcons.mic,
-                        onPressed: onToggleDictation,
-                        color: p.onSurface,
                       ),
-                const SizedBox(width: 4),
-                SizedBox(
-                  width: 42,
-                  height: 42,
-                  child: FilledButton(
-                    onPressed: onSend,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: p.primary,
-                      padding: EdgeInsets.zero,
-                      shape: const CircleBorder(),
                     ),
-                    child: AnimatedBuilder(
-                      animation: input,
-                      builder: (context, _) {
-                        return Icon(
-                          app.isGenerating
-                              ? LucideIcons.square
-                              : (input.text.trim().isNotEmpty || attachments.isNotEmpty
-                                  ? LucideIcons.arrowUp
-                                  : LucideIcons.audioLines),
-                          size: app.isGenerating ? 15 : 20,
-                          color: Colors.white,
-                        );
-                      },
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        Divider(height: 1, color: p.outline),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 5),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              RoundIconButton(
+                icon: LucideIcons.plus,
+                onPressed: onPick,
+                color: p.onSurface,
+              ),
+              Expanded(
+                child: Container(
+                  constraints: BoxConstraints(
+                    minHeight: 40,
+                    maxHeight: compact ? 68 : 96,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: TextField(
+                    controller: input,
+                    minLines: 1,
+                    maxLines: compact ? 2 : 4,
+                    style: TextStyle(
+                      color: p.onSurface,
+                      fontSize: 15,
+                      height: 1.32,
                     ),
+                    decoration: InputDecoration(
+                      filled: false,
+                      hintText: copy.t('chat', 'placeholder'),
+                      hintStyle: TextStyle(
+                        color: p.onSurfaceVariant.withValues(alpha: 0.55),
+                      ),
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 7),
+                    ),
+                    onSubmitted: (_) => onSend(),
                   ),
                 ),
-              ],
-            ),
+              ),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onToggleDictation,
+                onLongPressStart: (_) => onStartDictation(),
+                onLongPressEnd: (_) => onStopDictation(),
+                onLongPressCancel: onStopDictation,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 120),
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: isListening
+                        ? p.error.withValues(alpha: 0.16)
+                        : Colors.transparent,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Center(
+                    child: isListening
+                        ? ValueListenableBuilder<double>(
+                            valueListenable: soundLevelNotifier,
+                            builder: (context, soundLevel, _) {
+                              final pulse = (soundLevel * 0.4).clamp(0.0, 20.0);
+                              return AnimatedContainer(
+                                duration: const Duration(milliseconds: 90),
+                                width: 12 + pulse,
+                                height: 12 + pulse,
+                                decoration: BoxDecoration(
+                                  color: p.error,
+                                  shape: BoxShape.circle,
+                                ),
+                              );
+                            },
+                          )
+                        : Icon(LucideIcons.mic, size: 20, color: p.onSurface),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              SizedBox(
+                width: 42,
+                height: 42,
+                child: FilledButton(
+                  onPressed: onSend,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: p.primary,
+                    padding: EdgeInsets.zero,
+                    shape: const CircleBorder(),
+                  ),
+                  child: AnimatedBuilder(
+                    animation: input,
+                    builder: (context, _) {
+                      return Icon(
+                        app.isGenerating
+                            ? LucideIcons.square
+                            : (input.text.trim().isNotEmpty ||
+                                      attachments.isNotEmpty
+                                  ? LucideIcons.arrowUp
+                                  : LucideIcons.audioLines),
+                        size: app.isGenerating ? 15 : 20,
+                        color: Colors.white,
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      );
+        ),
+      ],
+    );
 
     if (p.isClassic) {
       return Container(
@@ -2021,16 +2155,18 @@ class _InputPod extends StatelessWidget {
               border: Border.all(
                 color: p.outline.withValues(alpha: p.isAurora ? 0.3 : 0.8),
               ),
-              gradient: p.isLiquidGlass ? LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Colors.white.withValues(alpha: p.isDark ? 0.15 : 0.8),
-                  p.surface,
-                  p.surface.withValues(alpha: p.isDark ? 0.05 : 0.4),
-                ],
-                stops: const [0.0, 0.4, 1.0],
-              ) : null,
+              gradient: p.isLiquidGlass
+                  ? LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Colors.white.withValues(alpha: p.isDark ? 0.15 : 0.8),
+                        p.surface,
+                        p.surface.withValues(alpha: p.isDark ? 0.05 : 0.4),
+                      ],
+                      stops: const [0.0, 0.4, 1.0],
+                    )
+                  : null,
             ),
             child: inner,
           ),
@@ -2039,7 +2175,6 @@ class _InputPod extends StatelessWidget {
     );
   }
 }
-
 
 class _VoiceOverlay extends StatelessWidget {
   const _VoiceOverlay({

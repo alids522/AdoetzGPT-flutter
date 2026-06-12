@@ -28,8 +28,15 @@ class AdoetzAppState extends ChangeNotifier {
   Timer? _remoteSyncTimer;
   Timer? _liveInputReleaseTimer;
   Timer? _liveOutputPulseTimer;
+  Timer? _streamFlushTimer;
   DateTime? _lastHapticAt;
-  DateTime? _lastStreamUpdate;
+  String? _activeGenerationId;
+  String? _activeStreamSessionId;
+  String? _activeStreamBotId;
+  String _pendingStreamText = '';
+  String _lastDisplayedStreamText = '';
+  int _lastHapticStreamLength = 0;
+  bool _generationStopRequested = false;
 
   final _audioPlayer = AudioPlayer();
 
@@ -190,7 +197,7 @@ class AdoetzAppState extends ChangeNotifier {
       isThinkingMode: isThinkingMode,
       isArtifactMode: isArtifactMode,
       soundEffectsEnabled: soundEffectsEnabled,
-      isLiveVideoEnabled: isLiveVideoEnabled,
+      isLiveVideoEnabled: false,
       isLiveFrontCamera: isLiveFrontCamera,
       userName: userName,
       geminiApiKey: geminiApiKey,
@@ -217,7 +224,7 @@ class AdoetzAppState extends ChangeNotifier {
     isThinkingMode = state.isThinkingMode;
     isArtifactMode = state.isArtifactMode;
     soundEffectsEnabled = state.soundEffectsEnabled;
-    isLiveVideoEnabled = state.isLiveVideoEnabled;
+    isLiveVideoEnabled = false;
     isLiveFrontCamera = state.isLiveFrontCamera;
     userName = state.userName;
     geminiApiKey = state.geminiApiKey;
@@ -531,8 +538,6 @@ class AdoetzAppState extends ChangeNotifier {
     unawaited(_persistAndScheduleRemote());
   }
 
-
-
   void headerChatShortcut() {
     createSession();
   }
@@ -648,9 +653,12 @@ class AdoetzAppState extends ChangeNotifier {
     unawaited(_playSound('send_user_message.wav'));
     unawaited(_playSound('loading_ai_response.wav'));
 
-    _lastStreamUpdate = null;
-    Timer? loadingAudioTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-      if (!isGenerating) {
+    _cancelStreamFlush(resetText: true);
+    _generationStopRequested = false;
+    Timer? loadingAudioTimer = Timer.periodic(const Duration(seconds: 2), (
+      timer,
+    ) {
+      if (!isGenerating || _generationStopRequested) {
         timer.cancel();
       } else {
         unawaited(_playSound('loading_ai_response.wav'));
@@ -670,6 +678,7 @@ class AdoetzAppState extends ChangeNotifier {
     final history = session.messages;
     final botId = (now.millisecondsSinceEpoch + 1).toString();
     final modelForRequest = selectedModel;
+    final generationId = '${now.microsecondsSinceEpoch}-$botId';
     final botMessage = Message(
       id: botId,
       text: '',
@@ -690,6 +699,9 @@ class AdoetzAppState extends ChangeNotifier {
     );
     _replaceSession(session.id, nextSession);
     isGenerating = true;
+    _activeGenerationId = generationId;
+    _activeStreamSessionId = session.id;
+    _activeStreamBotId = botId;
     syncStatus = '';
     _maybeSaveUserMemory(prompt);
     notifyListeners();
@@ -719,24 +731,22 @@ class AdoetzAppState extends ChangeNotifier {
         artifactMode: isArtifactMode,
         syncSettings: syncSettings,
         onStatus: (status) {
-          _updateBotMessage(session.id, botId, status);
+          _queueStreamText(generationId, session.id, botId, status);
         },
         onText: (text) {
           if (loadingAudioTimer != null) {
             loadingAudioTimer?.cancel();
             loadingAudioTimer = null;
           }
-          if (isGenerating) {
-            final now = DateTime.now();
-            if (_lastStreamUpdate == null || now.difference(_lastStreamUpdate!).inMilliseconds > 60) {
-              _lastStreamUpdate = now;
-              _updateBotMessage(session.id, botId, text);
-              _maybeHapticForStreaming(text);
-            }
-          }
+          _queueStreamText(generationId, session.id, botId, text);
         },
       );
-      
+
+      if (_activeGenerationId != generationId || _generationStopRequested) {
+        return;
+      }
+      _queueStreamText(generationId, session.id, botId, response.text);
+      _flushStreamText(generationId, session.id, botId, force: true);
       _updateBotMessage(
         session.id,
         botId,
@@ -755,6 +765,9 @@ class AdoetzAppState extends ChangeNotifier {
         ),
       ];
     } catch (error) {
+      if (_activeGenerationId != generationId || _generationStopRequested) {
+        return;
+      }
       _updateBotMessage(
         session.id,
         botId,
@@ -763,15 +776,35 @@ class AdoetzAppState extends ChangeNotifier {
     } finally {
       loadingAudioTimer?.cancel();
       loadingAudioTimer = null;
-      isGenerating = false;
-      notifyListeners();
-      await _persistAndScheduleRemote();
+      if (_activeGenerationId == generationId || !isGenerating) {
+        _cancelStreamFlush(resetText: true);
+        _activeGenerationId = null;
+        _activeStreamSessionId = null;
+        _activeStreamBotId = null;
+        _generationStopRequested = false;
+        isGenerating = false;
+        notifyListeners();
+        await _persistAndScheduleRemote();
+      }
     }
   }
 
   void stopGeneration() {
+    final generationId = _activeGenerationId;
+    final sessionId = _activeStreamSessionId;
+    final botId = _activeStreamBotId;
+    if (generationId != null && sessionId != null && botId != null) {
+      _flushStreamText(generationId, sessionId, botId, force: true);
+    }
+    _generationStopRequested = true;
+    _activeGenerationId = null;
+    _activeStreamSessionId = null;
+    _activeStreamBotId = null;
+    _cancelStreamFlush(resetText: true);
+    _ai.cancelActiveRequests();
     isGenerating = false;
     notifyListeners();
+    unawaited(_persistAndScheduleRemote());
   }
 
   Future<void> startLiveConversation() async {
@@ -943,9 +976,9 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void toggleLiveVideo() {
+    if (!isLiveActive && !isLiveConnecting) return;
     isLiveVideoEnabled = !isLiveVideoEnabled;
     notifyListeners();
-    unawaited(_persist());
   }
 
   void toggleLiveCameraFacing() {
@@ -993,14 +1026,14 @@ class AdoetzAppState extends ChangeNotifier {
     final messages = [...session.messages];
     final attachments = messages[index].attachments;
     final trimmed = messages.sublist(0, index);
-    
+
     final newSession = Session.empty();
     final forkedSession = newSession.copyWith(
       title: '${session.title} (Branch)',
       messages: trimmed,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
-    
+
     sessions = [forkedSession, ...sessions];
     currentSessionId = forkedSession.id;
     notifyListeners();
@@ -1014,7 +1047,7 @@ class AdoetzAppState extends ChangeNotifier {
         unawaited(HapticFeedback.lightImpact());
         final user = session.messages[i];
         final trimmed = session.messages.sublist(0, i);
-        
+
         final newSession = Session.empty();
         final forkedSession = newSession.copyWith(
           title: '${session.title} (Branch)',
@@ -1158,6 +1191,58 @@ class AdoetzAppState extends ChangeNotifier {
         .toList();
   }
 
+  void _queueStreamText(
+    String generationId,
+    String sessionId,
+    String botId,
+    String text,
+  ) {
+    if (_activeGenerationId != generationId || _generationStopRequested) return;
+    _pendingStreamText = text;
+    _streamFlushTimer ??= Timer(const Duration(milliseconds: 140), () {
+      _streamFlushTimer = null;
+      _flushStreamText(generationId, sessionId, botId);
+    });
+  }
+
+  void _flushStreamText(
+    String generationId,
+    String sessionId,
+    String botId, {
+    bool force = false,
+  }) {
+    if (_activeGenerationId != generationId || _pendingStreamText.isEmpty) {
+      return;
+    }
+    _streamFlushTimer?.cancel();
+    _streamFlushTimer = null;
+
+    final text = _pendingStreamText;
+    if (!force && text == _lastDisplayedStreamText) return;
+    if (text.length < _lastHapticStreamLength) {
+      _lastHapticStreamLength = 0;
+    }
+
+    _lastDisplayedStreamText = text;
+    _updateBotMessage(sessionId, botId, text);
+    final deltaChars = text.length - _lastHapticStreamLength;
+    if (deltaChars > 0) {
+      _maybeHapticForStreamingDelta(deltaChars);
+      _lastHapticStreamLength = text.length;
+    }
+  }
+
+  void _cancelStreamFlush({bool resetText = false}) {
+    _streamFlushTimer?.cancel();
+    _streamFlushTimer = null;
+    if (resetText) {
+      _pendingStreamText = '';
+      _lastDisplayedStreamText = '';
+      _lastHapticStreamLength = 0;
+      _lastHapticAt = null;
+    }
+  }
+
   void _updateBotMessage(
     String sessionId,
     String botId,
@@ -1284,6 +1369,7 @@ class AdoetzAppState extends ChangeNotifier {
     isLiveActive = false;
     isLiveConnecting = false;
     isLiveRecording = false;
+    isLiveVideoEnabled = false;
     liveInputLevel = 0;
     liveOutputLevel = 0;
     _liveInputReleaseTimer?.cancel();
@@ -1357,16 +1443,18 @@ class AdoetzAppState extends ChangeNotifier {
     } catch (_) {}
   }
 
-  void _maybeHapticForStreaming(String text) {
+  void _maybeHapticForStreamingDelta(int deltaChars) {
     if (!genSettings.hapticStreamingEnabled ||
         kIsWeb ||
         defaultTargetPlatform != TargetPlatform.android ||
-        text.trim().isEmpty) {
+        deltaChars <= 0 ||
+        !isGenerating ||
+        _generationStopRequested) {
       return;
     }
     final now = DateTime.now();
     final last = _lastHapticAt;
-    if (last != null && now.difference(last).inMilliseconds < 40) return;
+    if (last != null && now.difference(last).inMilliseconds < 90) return;
     _lastHapticAt = now;
     unawaited(HapticFeedback.lightImpact());
   }
@@ -1522,6 +1610,8 @@ class AdoetzAppState extends ChangeNotifier {
     _liveOutputPulseTimer?.cancel();
     final live = _liveService;
     if (live != null) unawaited(live.dispose());
+    _cancelStreamFlush(resetText: true);
+    _ai.dispose();
     unawaited(LiveForegroundService.stop());
     super.dispose();
   }

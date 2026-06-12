@@ -107,7 +107,7 @@ class MainActivity : FlutterActivity() {
         if (previousAudioMode == null) {
             previousAudioMode = audioManager.mode
         }
-        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        audioManager.mode = AudioManager.MODE_NORMAL
         val minBuffer = AudioTrack.getMinBufferSize(
             sampleRate,
             AudioFormat.CHANNEL_OUT_MONO,
@@ -115,7 +115,7 @@ class MainActivity : FlutterActivity() {
         )
         val bufferSize = maxOf(minBuffer, sampleRate * 2)
         val attributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+            .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .build()
         val format = AudioFormat.Builder()

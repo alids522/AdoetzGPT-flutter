@@ -46,7 +46,16 @@ class ModelCatalog {
 }
 
 class AiService {
-  final http.Client _client = http.Client();
+  http.Client _client = http.Client();
+
+  void cancelActiveRequests() {
+    _client.close();
+    _client = http.Client();
+  }
+
+  void dispose() {
+    _client.close();
+  }
 
   static const _textPrompts = {
     'Assistant':
@@ -378,7 +387,8 @@ class AiService {
               if (file.type == 'text/extracted') {
                 return {
                   'type': 'text',
-                  'text': '\n=== Contents of ${file.name} ===\n${file.data}\n=== End of ${file.name} ===\n',
+                  'text':
+                      '\n=== Contents of ${file.name} ===\n${file.data}\n=== End of ${file.name} ===\n',
                 };
               }
               if (file.type.startsWith('image/')) {
@@ -526,7 +536,10 @@ class AiService {
           {'text': '$searchContext$prompt'},
           ...attachments.map((file) {
             if (file.type == 'text/extracted') {
-              return {'text': '\n=== Contents of ${file.name} ===\n${file.data}\n=== End of ${file.name} ===\n'};
+              return {
+                'text':
+                    '\n=== Contents of ${file.name} ===\n${file.data}\n=== End of ${file.name} ===\n',
+              };
             }
             return {
               'inlineData': {'data': file.data, 'mimeType': file.type},
