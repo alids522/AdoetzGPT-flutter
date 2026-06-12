@@ -684,31 +684,33 @@ class _MessageList extends StatelessWidget {
   Widget build(BuildContext context) {
     final app = context.watch<AdoetzAppState>();
     final messages = app.currentSession.messages;
-    return ListView.builder(
-      controller: controller,
-      padding: const EdgeInsets.fromLTRB(14, 72, 14, 240),
-      itemCount: messages.length + 1,
-      itemBuilder: (context, index) {
-        if (index == messages.length) return const SizedBox(height: 12);
-        final message = messages[index];
-        return Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 980),
-            child: SizedBox(
-              width: double.infinity,
-              child: _MessageBubble(
-                message: message,
-                isLast: index == messages.length - 1,
-                editing: editingId == message.id,
-                editController: editController,
-                onEditStart: () => onEditStart(message),
-                onEditCancel: onEditCancel,
-                onEditSave: () => onEditSave(message),
+    return SelectionArea(
+      child: ListView.builder(
+        controller: controller,
+        padding: const EdgeInsets.fromLTRB(14, 72, 14, 240),
+        itemCount: messages.length + 1,
+        itemBuilder: (context, index) {
+          if (index == messages.length) return const SizedBox(height: 12);
+          final message = messages[index];
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 980),
+              child: SizedBox(
+                width: double.infinity,
+                child: _MessageBubble(
+                  message: message,
+                  isLast: index == messages.length - 1,
+                  editing: editingId == message.id,
+                  editController: editController,
+                  onEditStart: () => onEditStart(message),
+                  onEditCancel: onEditCancel,
+                  onEditSave: () => onEditSave(message),
+                ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }
@@ -1147,7 +1149,7 @@ class _ThoughtBlockState extends State<_ThoughtBlock> {
                   thumbVisibility: widget.content.length > 420,
                   child: SingleChildScrollView(
                     controller: _controller,
-                    child: SelectableText(
+                    child: Text(
                       widget.content,
                       style: TextStyle(
                         color: p.onSurfaceVariant,
@@ -1301,7 +1303,6 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
               padding: const EdgeInsets.symmetric(vertical: 2),
               child: MarkdownBody(
                 data: processedContent,
-                selectable: true,
                 onTapLink: (text, href, title) {
                   if (href != null) {
                     launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
@@ -1685,7 +1686,7 @@ class _CopyableCodeBlock extends StatelessWidget {
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.all(12),
-            child: SelectableText(
+            child: Text(
               code.isEmpty ? ' ' : code,
               style: TextStyle(
                 color: palette.onSurface,
@@ -1995,7 +1996,16 @@ class _InputPod extends StatelessWidget {
       0,
       (sum, message) => sum + countTokens(message.text),
     );
-    final contextMax = contextWindow(app.selectedModel);
+    final target = app.activeChatTarget;
+    final int contextMax;
+    final bool isHardcoded;
+    if (target.contextLength != null) {
+      contextMax = target.contextLength!;
+      isHardcoded = false;
+    } else {
+      contextMax = contextWindow(target.modelId ?? app.selectedModel);
+      isHardcoded = true;
+    }
     final liveTokens = historyTokens + countTokens(input.text);
     final compact = MediaQuery.of(context).size.width < 560;
     final contextRatio = (liveTokens / contextMax).clamp(0.0, 1.0).toDouble();
@@ -2058,14 +2068,28 @@ class _InputPod extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      '${formatTokenCount(liveTokens)} / ${formatTokenCount(contextMax)}',
-                      style: TextStyle(
-                        color: p.onSurface,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w700,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '${formatTokenCount(liveTokens)} / ${formatTokenCount(contextMax)}',
+                          style: TextStyle(
+                            color: p.onSurface,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Tooltip(
+                          message: isHardcoded ? 'Estimated context length' : 'Verified from API',
+                          child: Icon(
+                            isHardcoded ? LucideIcons.wand2 : LucideIcons.checkCircle2,
+                            size: 10,
+                            color: isHardcoded ? p.onSurface.withValues(alpha: 0.5) : const Color(0xff16a34a),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 3),
                     SizedBox(

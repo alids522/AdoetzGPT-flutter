@@ -697,6 +697,26 @@ class AdoetzAppState extends ChangeNotifier {
       selectedModel = target.modelId ?? target.displayName;
     }
     selectedTargetId = target.id;
+
+    if (currentSession.messages.isEmpty) {
+      if (currentSession.currentTargetId != target.id) {
+        sessions = sessions.map((s) {
+          if (s.id == currentSessionId) {
+            return s.copyWith(
+              currentTargetId: target.id,
+              startedWithTargetId: target.id,
+              lastTargetId: target.id,
+            );
+          }
+          return s;
+        }).toList();
+        unawaited(_persistAndScheduleRemote());
+      }
+      currentView = AppView.chat;
+      notifyListeners();
+      return;
+    }
+
     final session = Session.empty(null, target.id);
     sessions = [session, ...sessions];
     currentSessionId = session.id;
@@ -840,9 +860,9 @@ class AdoetzAppState extends ChangeNotifier {
         .firstOrNull;
     if (connector == null) return;
     try {
-      List<String> names = [];
+      List<Map<String, dynamic>> modelsData = [];
       try {
-        names = await _ai
+        modelsData = await _ai
             .fetchAvailableModelsForEndpoint(
               endpoint: _endpointForConnector(connector),
               syncSettings: syncSettings,
@@ -857,26 +877,28 @@ class AdoetzAppState extends ChangeNotifier {
               )
               .timeout(const Duration(seconds: 16));
           // If ping succeeds, use existing targets or default to agent name
-          names = connector.targets.isNotEmpty 
-              ? connector.targets.map((t) => t.modelId).toList()
-              : [connector.name.toLowerCase().replaceAll(' ', '-')];
+          modelsData = connector.targets.isNotEmpty 
+              ? connector.targets.map((t) => {'id': t.modelId, 'context_length': t.contextLength}).toList()
+              : [{'id': connector.name.toLowerCase().replaceAll(' ', '-')}];
         } else {
           rethrow;
         }
       }
       final now = DateTime.now().millisecondsSinceEpoch;
-      final targets = names
-          .where((name) => name.trim().isNotEmpty)
-          .map(
-            (name) => ConnectorTarget(
+      final targets = modelsData
+          .where((m) => (m['id'] as String).trim().isNotEmpty)
+          .map((m) {
+            final name = m['id'] as String;
+            return ConnectorTarget(
               id: '${connector.id}:$name',
               connectorId: connector.id,
               modelId: name,
               displayName: name,
+              contextLength: m['context_length'] as int?,
               createdAt: now,
               updatedAt: now,
-            ),
-          )
+            );
+          })
           .toList();
       _updateConnector(
         id,
@@ -979,12 +1001,32 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void createSession() {
+    String targetId = activeChatTarget.id;
+    if (targetId.startsWith('agent:')) {
+      targetId = 'model:$selectedModel';
+      selectedTargetId = targetId;
+    }
+
     if (currentSession.messages.isEmpty) {
+      if (currentSession.currentTargetId != targetId) {
+        sessions = sessions.map((s) {
+          if (s.id == currentSessionId) {
+            return s.copyWith(
+              currentTargetId: targetId,
+              startedWithTargetId: targetId,
+              lastTargetId: targetId,
+            );
+          }
+          return s;
+        }).toList();
+        unawaited(_persistAndScheduleRemote());
+      }
       currentView = AppView.chat;
       notifyListeners();
       return;
     }
-    final session = Session.empty(null, activeChatTarget.id);
+    
+    final session = Session.empty(null, targetId);
     sessions = [session, ...sessions];
     currentSessionId = session.id;
     currentView = AppView.chat;
@@ -1073,6 +1115,29 @@ class AdoetzAppState extends ChangeNotifier {
     ];
     currentSessionId = session.id;
     currentView = AppView.chat;
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void clearAgentSessions(String connectorId) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    sessions = sessions.map((item) {
+      if (item.currentTargetId == 'agent:$connectorId') {
+        return item.copyWith(deleted: true, updatedAt: now);
+      }
+      return item;
+    }).toList();
+    
+    // If we just deleted the current session, switch to a valid one
+    final active = activeSessions;
+    if (active.isEmpty) {
+      final session = Session.empty(null, 'model:$selectedModel');
+      sessions = [...sessions, session];
+      currentSessionId = session.id;
+    } else if (sessions.firstWhere((s) => s.id == currentSessionId).deleted) {
+      currentSessionId = active.first.id;
+    }
+    
     notifyListeners();
     unawaited(_persistAndScheduleRemote());
   }
@@ -1748,10 +1813,11 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   Future<List<String>> fetchEndpointModels(EndpointConfig endpoint) async {
-    return _ai.fetchAvailableModelsForEndpoint(
+    final list = await _ai.fetchAvailableModelsForEndpoint(
       endpoint: endpoint,
       syncSettings: syncSettings,
     );
+    return list.map((m) => m['id'] as String).toList();
   }
 
   Future<void> saveSettings() async {

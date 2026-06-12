@@ -179,7 +179,7 @@ class _HeaderState extends State<_Header> {
                   child: InkWell(
                     key: _modelButtonKey,
                     borderRadius: BorderRadius.circular(999),
-                    onTap: () => _toggleModelPicker(context),
+                    onTap: activeTarget.isAgentServer ? null : () => _toggleModelPicker(context),
                     child: Container(
                       constraints: const BoxConstraints(maxWidth: 260),
                       padding: const EdgeInsets.symmetric(
@@ -209,13 +209,14 @@ class _HeaderState extends State<_Header> {
                           if (activeTarget.isAgentServer) ...[
                             const SizedBox(width: 7),
                             _ConnectorDot(status: activeTarget.status),
+                          ] else ...[
+                            const SizedBox(width: 5),
+                            Icon(
+                              LucideIcons.chevronDown,
+                              size: 14,
+                              color: p.onSurfaceVariant,
+                            ),
                           ],
-                          const SizedBox(width: 5),
-                          Icon(
-                            LucideIcons.chevronDown,
-                            size: 14,
-                            color: p.onSurfaceVariant,
-                          ),
                         ],
                       ),
                     ),
@@ -864,8 +865,11 @@ class _AppDrawerState extends State<_AppDrawer> {
     final app = context.watch<AdoetzAppState>();
     final activeSessions = app.activeSessions.toList();
     final searchQuery = searchController.text.trim();
+    final genericSessions = activeSessions
+        .where((s) => !s.currentTargetId.startsWith('agent:'))
+        .toList();
     final visibleSessions = searchQuery.isEmpty
-        ? activeSessions
+        ? genericSessions
         : activeSessions
               .where((session) => _sessionMatches(session, searchQuery))
               .toList();
@@ -964,18 +968,18 @@ class _AppDrawerState extends State<_AppDrawer> {
                     () => app.setView(AppView.tokenUsage),
                   ),
                 ),
-                const _AgentServersSection(),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 22,
-                    vertical: 10,
-                  ),
-                  child: Divider(color: p.outline),
-                ),
                 Expanded(
                   child: ListView(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                     children: [
+                      const _AgentServersSection(),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 22,
+                          vertical: 10,
+                        ),
+                        child: Divider(color: p.outline),
+                      ),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
                         child: Text(
@@ -1010,7 +1014,7 @@ class _AppDrawerState extends State<_AppDrawer> {
                             query: searchQuery,
                           ),
                         ),
-                      if (searchQuery.isEmpty && activeSessions.isNotEmpty)
+                      if (searchQuery.isEmpty && genericSessions.isNotEmpty)
                         _NavTile(
                           icon: LucideIcons.trash2,
                           label: copy.t('sidebar', 'clearAll'),
@@ -1177,9 +1181,6 @@ class _AgentServersSectionState extends State<_AgentServersSection> {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AdoetzAppState>();
-    final p = AppPalette.fromBrightness(
-      Theme.of(context).brightness == Brightness.dark,
-    );
     return Column(
       children: [
         _NavTile(
@@ -1206,78 +1207,9 @@ class _AgentServersSectionState extends State<_AgentServersSection> {
                   )
                 : Column(
                     children: app.agentConnectors.map((connector) {
-                      final active =
-                          app.activeChatTarget.connectorId == connector.id;
-                      return ListTile(
-                        dense: true,
-                        minLeadingWidth: 18,
-                        contentPadding: const EdgeInsets.only(left: 6),
-                        leading: _ConnectorDot(status: connector.status),
-                        title: Text(
-                          connector.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: active ? p.onSurface : p.onSurfaceVariant,
-                            fontWeight: active
-                                ? FontWeight.w900
-                                : FontWeight.w700,
-                          ),
-                        ),
-                        subtitle: Text(
-                          connector.providerLabel,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: p.onSurfaceVariant.withValues(alpha: 0.7),
-                            fontSize: 10,
-                          ),
-                        ),
-                        trailing: PopupMenuButton<String>(
-                          icon: Icon(
-                            LucideIcons.moreHorizontal,
-                            size: 16,
-                            color: p.onSurfaceVariant,
-                          ),
-                          onSelected: (value) => _handleConnectorMenu(
-                            context,
-                            app,
-                            connector,
-                            value,
-                          ),
-                          itemBuilder: (context) => [
-                            const PopupMenuItem(
-                              value: 'test',
-                              child: Text('Test Connection'),
-                            ),
-                            const PopupMenuItem(
-                              value: 'default',
-                              child: Text('Set as Default'),
-                            ),
-                            const PopupMenuItem(
-                              value: 'logs',
-                              child: Text('View Logs'),
-                            ),
-                            const PopupMenuItem(
-                              value: 'edit',
-                              child: Text('Edit'),
-                            ),
-                            PopupMenuItem(
-                              value: 'toggle',
-                              child: Text(
-                                connector.enabled ? 'Disable' : 'Enable',
-                              ),
-                            ),
-                            const PopupMenuItem(
-                              value: 'delete',
-                              child: Text('Delete'),
-                            ),
-                          ],
-                        ),
-                        onTap: () {
-                          app.startChatWithConnector(connector.id);
-                          Navigator.pop(context);
-                        },
+                      return _ConnectorAccordionTile(
+                        connector: connector,
+                        onCloseSidebar: () => Navigator.pop(context),
                       );
                     }).toList(),
                   ),
@@ -1288,57 +1220,6 @@ class _AgentServersSectionState extends State<_AgentServersSection> {
           duration: const Duration(milliseconds: 180),
         ),
       ],
-    );
-  }
-
-  void _handleConnectorMenu(
-    BuildContext context,
-    AdoetzAppState app,
-    AgentConnector connector,
-    String value,
-  ) {
-    switch (value) {
-      case 'test':
-        unawaited(app.testAgentConnector(connector.id));
-        break;
-      case 'default':
-        app.setDefaultConnector(connector.id);
-        break;
-      case 'logs':
-        _showConnectorLogs(context, connector);
-        break;
-      case 'edit':
-        Navigator.pop(context);
-        app.setView(AppView.settings);
-        break;
-      case 'toggle':
-        app.setConnectorEnabled(connector.id, !connector.enabled);
-        break;
-      case 'delete':
-        app.deleteAgentConnector(connector.id);
-        break;
-    }
-  }
-
-  void _showConnectorLogs(BuildContext context, AgentConnector connector) {
-    final logs = connector.logs.isEmpty
-        ? ['No connector logs yet.']
-        : connector.logs;
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('${connector.name} Logs'),
-        content: SizedBox(
-          width: 420,
-          child: SingleChildScrollView(child: SelectableText(logs.join('\n'))),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -1832,6 +1713,249 @@ class _SyncStatusIconState extends State<_SyncStatusIcon>
           child: Icon(LucideIcons.database, size: 16, color: iconColor),
         ),
       ),
+    );
+  }
+}
+
+class _ConnectorAccordionTile extends StatefulWidget {
+  const _ConnectorAccordionTile({
+    required this.connector,
+    required this.onCloseSidebar,
+  });
+
+  final AgentConnector connector;
+  final VoidCallback onCloseSidebar;
+
+  @override
+  State<_ConnectorAccordionTile> createState() => _ConnectorAccordionTileState();
+}
+
+class _ConnectorAccordionTileState extends State<_ConnectorAccordionTile> {
+  bool expanded = false;
+
+  void _confirmClearAgent(BuildContext context, AdoetzAppState app) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Clear ${widget.connector.name} Sessions'),
+        content: Text('Are you sure you want to delete all chats with ${widget.connector.name}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              app.clearAgentSessions(widget.connector.id);
+              Navigator.pop(context);
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleConnectorMenu(
+    BuildContext context,
+    AdoetzAppState app,
+    AgentConnector connector,
+    String value,
+  ) {
+    switch (value) {
+      case 'test':
+        unawaited(app.testAgentConnector(connector.id));
+        break;
+      case 'default':
+        app.setDefaultConnector(connector.id);
+        break;
+      case 'logs':
+        _showConnectorLogs(context, connector);
+        break;
+      case 'edit':
+        widget.onCloseSidebar();
+        app.setView(AppView.settings);
+        break;
+      case 'toggle':
+        app.setConnectorEnabled(connector.id, !connector.enabled);
+        break;
+      case 'delete':
+        app.deleteAgentConnector(connector.id);
+        break;
+    }
+  }
+
+  void _showConnectorLogs(BuildContext context, AgentConnector connector) {
+    final logs = connector.logs.isEmpty
+        ? ['No connector logs yet.']
+        : connector.logs;
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('${connector.name} Logs'),
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(child: SelectableText(logs.join('\n'))),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    final active = app.activeChatTarget.connectorId == widget.connector.id;
+    final agentSessions = app.activeSessions
+        .where((s) => s.currentTargetId == 'agent:${widget.connector.id}')
+        .toList();
+
+    return Column(
+      children: [
+        ListTile(
+          dense: true,
+          minLeadingWidth: 18,
+          contentPadding: const EdgeInsets.only(left: 6),
+          leading: _ConnectorDot(status: widget.connector.status),
+          title: Text(
+            widget.connector.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: active ? p.onSurface : p.onSurfaceVariant,
+              fontWeight: active ? FontWeight.w900 : FontWeight.w700,
+            ),
+          ),
+          subtitle: Text(
+            widget.connector.providerLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: p.onSurfaceVariant.withValues(alpha: 0.7),
+              fontSize: 10,
+            ),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              PopupMenuButton<String>(
+                icon: Icon(
+                  LucideIcons.moreHorizontal,
+                  size: 16,
+                  color: p.onSurfaceVariant,
+                ),
+                onSelected: (value) => _handleConnectorMenu(
+                  context,
+                  app,
+                  widget.connector,
+                  value,
+                ),
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'test',
+                    child: Text('Test Connection'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'default',
+                    child: Text('Set as Default'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'logs',
+                    child: Text('View Logs'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: Text('Edit'),
+                  ),
+                  PopupMenuItem(
+                    value: 'toggle',
+                    child: Text(
+                      widget.connector.enabled ? 'Disable' : 'Enable',
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Text('Delete'),
+                  ),
+                ],
+              ),
+              Icon(
+                expanded ? LucideIcons.chevronDown : LucideIcons.chevronRight,
+                size: 16,
+                color: p.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+            ],
+          ),
+          onTap: () {
+            setState(() {
+              expanded = !expanded;
+            });
+          },
+        ),
+        AnimatedCrossFade(
+          firstChild: const SizedBox.shrink(),
+          secondChild: Padding(
+            padding: const EdgeInsets.only(left: 20),
+            child: Column(
+              children: [
+                _NavTile(
+                  icon: LucideIcons.plus,
+                  label: 'New Chat',
+                  active: false,
+                  onTap: () {
+                    app.startChatWithConnector(widget.connector.id);
+                    widget.onCloseSidebar();
+                  },
+                ),
+                if (agentSessions.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'No chats yet.',
+                        style: TextStyle(
+                          color: p.onSurfaceVariant.withValues(alpha: 0.7),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  )
+                else ...[
+                  ...agentSessions.map(
+                    (session) => _SessionTile(
+                      session: session,
+                      query: '',
+                    ),
+                  ),
+                  _NavTile(
+                    icon: LucideIcons.trash2,
+                    label: 'Clear All',
+                    active: false,
+                    danger: true,
+                    onTap: () => _confirmClearAgent(context, app),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          crossFadeState: expanded
+              ? CrossFadeState.showSecond
+              : CrossFadeState.showFirst,
+          duration: const Duration(milliseconds: 180),
+        ),
+      ],
     );
   }
 }

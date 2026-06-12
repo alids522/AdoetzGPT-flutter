@@ -154,9 +154,9 @@ class AiService {
         if (response.statusCode >= 200 && response.statusCode < 300) {
           final data = jsonDecode(response.body);
           endpointModels.addAll(
-            _extractModelIds(
-              data,
-            ).map((name) => EndpointModel(name: name, endpointId: endpoint.id)),
+            _extractModels(data).map(
+              (m) => EndpointModel(name: m['id'] as String, endpointId: endpoint.id),
+            ),
           );
         } else {
           warnings.add(
@@ -184,7 +184,7 @@ class AiService {
     );
   }
 
-  Future<List<String>> fetchAvailableModelsForEndpoint({
+  Future<List<Map<String, dynamic>>> fetchAvailableModelsForEndpoint({
     required EndpointConfig endpoint,
     required SyncSettings syncSettings,
   }) async {
@@ -203,7 +203,7 @@ class AiService {
       );
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final data = jsonDecode(response.body);
-        return _extractModelIds(data).where((name) => name.isNotEmpty).toList();
+        return _extractModels(data);
       } else {
         throw Exception(
           'Fetch failed (${response.statusCode}): ${_extractApiError(response.body, 'No response body.')}',
@@ -319,7 +319,6 @@ class AiService {
         memories: memories,
         thinkingMode: thinkingMode,
         artifactMode: artifactMode,
-        genSettings: genSettings,
         syncSettings: syncSettings,
         onText: onText,
       );
@@ -407,7 +406,6 @@ class AiService {
     required List<Memory> memories,
     required bool thinkingMode,
     required bool artifactMode,
-    required GenerationSettings genSettings,
     required SyncSettings syncSettings,
     required TextDelta onText,
   }) async {
@@ -456,7 +454,6 @@ class AiService {
       'messages': messages,
       'stream': true,
       'stream_options': {'include_usage': true},
-      'max_tokens': 4096,
     };
 
     final request =
@@ -978,7 +975,7 @@ class AiService {
     return kIsWeb ? 'http://127.0.0.1:3000' : '';
   }
 
-  List<String> _extractModelIds(dynamic data) {
+  List<Map<String, dynamic>> _extractModels(dynamic data) {
     final rawItems = switch (data) {
       List() => data,
       Map() when data['data'] is List => data['data'] as List,
@@ -988,17 +985,26 @@ class AiService {
     };
     return rawItems
         .map((item) {
-          if (item is String) return item;
+          if (item is String) return {'id': item};
           if (item is Map) {
-            return stringValue(
+            final name = stringValue(
               item['id'],
               stringValue(item['name'], stringValue(item['model'])),
             );
+            final ctx = item['context_length'] ?? item['max_tokens'] ?? item['max_context'];
+            return {
+              'id': name,
+              if (ctx != null && int.tryParse(ctx.toString()) != null)
+                'context_length': int.parse(ctx.toString()),
+            };
           }
-          return '';
+          return {'id': ''};
         })
-        .map((name) => name.replaceFirst(RegExp(r'^models/'), '').trim())
-        .where((name) => name.isNotEmpty)
+        .map((m) {
+          final id = (m['id'] as String).replaceFirst(RegExp(r'^models/'), '').trim();
+          return {'id': id, if (m.containsKey('context_length')) 'context_length': m['context_length']};
+        })
+        .where((m) => (m['id'] as String).isNotEmpty)
         .toList();
   }
 

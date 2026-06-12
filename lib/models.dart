@@ -604,6 +604,7 @@ class ConnectorTarget {
     required this.connectorId,
     required this.modelId,
     required this.displayName,
+    this.contextLength,
     this.enabled = true,
     required this.createdAt,
     required this.updatedAt,
@@ -613,6 +614,7 @@ class ConnectorTarget {
   final String connectorId;
   final String modelId;
   final String displayName;
+  final int? contextLength;
   final bool enabled;
   final int createdAt;
   final int updatedAt;
@@ -622,6 +624,7 @@ class ConnectorTarget {
     String? connectorId,
     String? modelId,
     String? displayName,
+    int? contextLength,
     bool? enabled,
     int? createdAt,
     int? updatedAt,
@@ -631,6 +634,7 @@ class ConnectorTarget {
       connectorId: connectorId ?? this.connectorId,
       modelId: modelId ?? this.modelId,
       displayName: displayName ?? this.displayName,
+      contextLength: contextLength ?? this.contextLength,
       enabled: enabled ?? this.enabled,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -654,6 +658,8 @@ class ConnectorTarget {
         json['display_name'],
         stringValue(json['displayName'], modelId),
       ),
+      contextLength:
+          json['context_length'] as int? ?? json['contextLength'] as int?,
       enabled: boolValue(json['enabled'], true),
       createdAt: intValue(json['created_at'], intValue(json['createdAt'], now)),
       updatedAt: intValue(json['updated_at'], intValue(json['updatedAt'], now)),
@@ -665,6 +671,7 @@ class ConnectorTarget {
     'connector_id': connectorId,
     'model_id': modelId,
     'display_name': displayName,
+    if (contextLength != null) 'context_length': contextLength,
     'enabled': enabled,
     'created_at': createdAt,
     'updated_at': updatedAt,
@@ -850,6 +857,7 @@ class ChatTarget {
     required this.provider,
     this.connectorId,
     this.modelId,
+    this.contextLength,
     this.status = ConnectorStatus.online,
     this.capabilities = const ConnectorCapabilities(),
     this.isDefault = false,
@@ -861,6 +869,7 @@ class ChatTarget {
   final String provider;
   final String? connectorId;
   final String? modelId;
+  final int? contextLength;
   final ConnectorStatus status;
   final ConnectorCapabilities capabilities;
   final bool isDefault;
@@ -885,9 +894,10 @@ class ChatTarget {
     final enabledTargets = connector.targets
         .where((item) => item.enabled)
         .toList();
+    final selectedTarget =
+        target ?? (enabledTargets.isEmpty ? null : enabledTargets.first);
     final modelId =
-        target?.modelId ??
-        (enabledTargets.isEmpty ? null : enabledTargets.first.modelId) ??
+        selectedTarget?.modelId ??
         connector.name.toLowerCase().replaceAll(' ', '-');
     return ChatTarget(
       id: 'agent:${connector.id}',
@@ -896,6 +906,7 @@ class ChatTarget {
       provider: connector.providerLabel,
       connectorId: connector.id,
       modelId: modelId,
+      contextLength: selectedTarget?.contextLength,
       status: connector.status,
       capabilities: connector.capabilities,
       isDefault: connector.isDefault,
