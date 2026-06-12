@@ -477,6 +477,7 @@ class AiService {
     }
 
     final buffer = StringBuffer();
+    final rawBuffer = StringBuffer();
     var inputTokens =
         countTokens(finalPrompt) +
         countTokens(systemText) +
@@ -489,6 +490,8 @@ class AiService {
             .transform(utf8.decoder)
             .transform(const LineSplitter())) {
       final trimmed = line.trim();
+      rawBuffer.writeln(trimmed);
+      
       if (!trimmed.startsWith('data: ')) continue;
       final dataText = trimmed.substring(6).trim();
       if (dataText == '[DONE]') break;
@@ -513,9 +516,21 @@ class AiService {
           buffer.write(text);
           onText(buffer.toString());
         }
-        final content = delta is Map
+        final messageObj = choice is Map ? choice['message'] : null;
+        var content = delta is Map
             ? stringValue(delta['content'])
-            : stringValue(choice is Map ? choice['text'] : '');
+            : messageObj is Map
+                ? stringValue(messageObj['content'])
+                : stringValue(choice is Map ? choice['text'] : '');
+                
+        // Fallback for tools if content is empty
+        if (content.isEmpty) {
+          final tools = delta is Map ? delta['tool_calls'] : (messageObj is Map ? messageObj['tool_calls'] : null);
+          if (tools is List && tools.isNotEmpty) {
+            content = '\n```json\n// Tool Call\n${jsonEncode(tools)}\n```\n';
+          }
+        }
+        
         if (content.isNotEmpty) {
           if (inReasoning) {
             inReasoning = false;
@@ -527,6 +542,28 @@ class AiService {
       } catch (_) {}
     }
     if (inReasoning) buffer.write('\n</think>\n');
+    
+    // Fallback: if the stream didn't yield any text, try parsing the entire raw buffer as a flat JSON response
+    // in case the server ignored the "stream: true" flag.
+    if (buffer.isEmpty && rawBuffer.isNotEmpty) {
+      try {
+        final rawStr = rawBuffer.toString().trim();
+        if (rawStr.startsWith('{')) {
+          final parsed = jsonDecode(rawStr);
+          final choice = parsed['choices']?[0];
+          final content = choice?['message']?['content'] ?? choice?['text'];
+          if (content != null) {
+            buffer.write(stringValue(content));
+          }
+        }
+      } catch (_) {}
+    }
+    
+    // Final fallback if absolutely nothing was extracted
+    if (buffer.isEmpty && rawBuffer.toString().trim().isNotEmpty) {
+      buffer.write('```\n${rawBuffer.toString().trim()}\n```');
+    }
+
     outputTokens = outputTokens == 0
         ? countTokens(buffer.toString())
         : outputTokens;
