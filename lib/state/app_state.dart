@@ -1638,7 +1638,7 @@ class AdoetzAppState extends ChangeNotifier {
         ? target.modelId!.trim()
         : (connector.targets.isNotEmpty
               ? connector.targets.first.modelId
-              : connector.name);
+              : connector.name.toLowerCase().replaceAll(' ', '-'));
     return _TargetRequestConfig(
       model: model,
       endpoints: [...endpoints, endpoint],

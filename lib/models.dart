@@ -888,7 +888,7 @@ class ChatTarget {
     final modelId =
         target?.modelId ??
         (enabledTargets.isEmpty ? null : enabledTargets.first.modelId) ??
-        connector.name;
+        connector.name.toLowerCase().replaceAll(' ', '-');
     return ChatTarget(
       id: 'agent:${connector.id}',
       type: ChatTargetType.agentServer,
