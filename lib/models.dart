@@ -480,20 +480,47 @@ class Memory {
     required this.id,
     required this.content,
     required this.timestamp,
+    this.key = '',
+    this.type = 'preference',
+    this.scope = 'global',
+    this.sensitivity = 'low',
   });
 
   final String id;
   final String content;
   final int timestamp;
+  final String key;
+  final String type;
+  final String scope;
+  final String sensitivity;
 
-  Memory copyWith({String? content}) =>
-      Memory(id: id, content: content ?? this.content, timestamp: timestamp);
+  Memory copyWith({
+    String? content,
+    int? timestamp,
+    String? key,
+    String? type,
+    String? scope,
+    String? sensitivity,
+  }) => Memory(
+    id: id,
+    content: content ?? this.content,
+    timestamp: timestamp ?? this.timestamp,
+    key: key ?? this.key,
+    type: type ?? this.type,
+    scope: scope ?? this.scope,
+    sensitivity: sensitivity ?? this.sensitivity,
+  );
 
   factory Memory.fromJson(Map<String, dynamic> json) {
+    final content = stringValue(json['content']);
     return Memory(
       id: stringValue(json['id']),
-      content: stringValue(json['content']),
+      content: content,
       timestamp: intValue(json['timestamp']),
+      key: stringValue(json['key'], inferKey(content)),
+      type: stringValue(json['type'], 'preference'),
+      scope: stringValue(json['scope'], 'global'),
+      sensitivity: stringValue(json['sensitivity'], 'low'),
     );
   }
 
@@ -501,7 +528,44 @@ class Memory {
     'id': id,
     'content': content,
     'timestamp': timestamp,
+    if (key.isNotEmpty) 'key': key,
+    if (type.isNotEmpty) 'type': type,
+    if (scope.isNotEmpty) 'scope': scope,
+    if (sensitivity.isNotEmpty) 'sensitivity': sensitivity,
   };
+
+  static String inferKey(String content) {
+    final value = content
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^\w\s-]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (value.contains('name is') || value.contains('named')) {
+      return 'user_name';
+    }
+    if (value.contains('nickname') || value.contains('call user')) {
+      return 'nickname';
+    }
+    if (RegExp(r'\b(dog|dogs|cat|cats|pet|pets)\b').hasMatch(value)) {
+      return 'pets';
+    }
+    if (value.contains('language') || value.contains('indonesian')) {
+      return 'preferred_language';
+    }
+    if (value.contains('tone') ||
+        value.contains('verbose') ||
+        value.contains('concise') ||
+        value.contains('casual')) {
+      return 'preferred_tone';
+    }
+    if (value.contains('flutter') || value.contains('react')) {
+      return 'preferred_framework';
+    }
+    if (value.contains('project') || value.contains('app')) {
+      return 'project_requirement';
+    }
+    return '';
+  }
 }
 
 class TokenUsageRecord {
@@ -923,9 +987,7 @@ class PersistedAppState {
         .toList(),
     'genSettings': genSettings.toJson(),
     'voiceSettings': voiceSettings.toJson(),
-    'sessions': sessions
-        .map((item) => item.toJson())
-        .toList(),
+    'sessions': sessions.map((item) => item.toJson()).toList(),
     'currentSessionId': currentSessionId,
     'memories': memories.map((item) => item.toJson()).toList(),
     'tokenUsageData': tokenUsageData.map((item) => item.toJson()).toList(),

@@ -12,6 +12,7 @@ import '../models.dart';
 import '../services/ai_service.dart';
 import '../services/gemini_live_service.dart';
 import '../services/live_foreground_service.dart';
+import '../services/memory_agent.dart';
 import '../services/storage_service.dart';
 import '../services/sync_service.dart';
 
@@ -29,13 +30,11 @@ class AdoetzAppState extends ChangeNotifier {
   Timer? _liveInputReleaseTimer;
   Timer? _liveOutputPulseTimer;
   Timer? _streamFlushTimer;
-  DateTime? _lastHapticAt;
   String? _activeGenerationId;
   String? _activeStreamSessionId;
   String? _activeStreamBotId;
   String _pendingStreamText = '';
   String _lastDisplayedStreamText = '';
-  int _lastHapticStreamLength = 0;
   bool _generationStopRequested = false;
 
   final _audioPlayer = AudioPlayer();
@@ -630,13 +629,24 @@ class AdoetzAppState extends ChangeNotifier {
     unawaited(_persistAndScheduleRemote());
   }
 
-  Memory? saveMemory(String content) {
+  Memory? saveMemory(
+    String content, {
+    String key = '',
+    String type = 'preference',
+    String scope = 'global',
+    String sensitivity = 'low',
+  }) {
     final clean = content.trim();
     if (clean.isEmpty || _isDuplicateMemory(clean)) return null;
+    final now = DateTime.now().millisecondsSinceEpoch;
     final memory = Memory(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      id: now.toString(),
       content: clean,
-      timestamp: DateTime.now().millisecondsSinceEpoch,
+      timestamp: now,
+      key: key.isEmpty ? Memory.inferKey(clean) : key,
+      type: type,
+      scope: scope,
+      sensitivity: sensitivity,
     );
     memories = [memory, ...memories];
     notifyListeners();
@@ -1225,17 +1235,9 @@ class AdoetzAppState extends ChangeNotifier {
 
     final text = _pendingStreamText;
     if (!force && text == _lastDisplayedStreamText) return;
-    if (text.length < _lastHapticStreamLength) {
-      _lastHapticStreamLength = 0;
-    }
 
     _lastDisplayedStreamText = text;
     _updateBotMessage(sessionId, botId, text);
-    final deltaChars = text.length - _lastHapticStreamLength;
-    if (deltaChars > 0) {
-      _maybeHapticForStreamingDelta(deltaChars);
-      _lastHapticStreamLength = text.length;
-    }
   }
 
   void _cancelStreamFlush({bool resetText = false}) {
@@ -1244,8 +1246,6 @@ class AdoetzAppState extends ChangeNotifier {
     if (resetText) {
       _pendingStreamText = '';
       _lastDisplayedStreamText = '';
-      _lastHapticStreamLength = 0;
-      _lastHapticAt = null;
     }
   }
 
@@ -1297,7 +1297,7 @@ class AdoetzAppState extends ChangeNotifier {
           'live-$sender-${now.microsecondsSinceEpoch}-${messages.length}';
       if (isUser) {
         _liveUserMessageId = id;
-        _maybeSaveUserMemory(clean);
+        if (finished) _maybeSaveUserMemory(clean);
       } else {
         _liveBotMessageId = id;
       }
@@ -1449,28 +1449,6 @@ class AdoetzAppState extends ChangeNotifier {
     } catch (_) {}
   }
 
-  void _maybeHapticForStreamingDelta(int deltaChars) {
-    if (!genSettings.hapticStreamingEnabled ||
-        kIsWeb ||
-        defaultTargetPlatform != TargetPlatform.android ||
-        deltaChars <= 0 ||
-        !isGenerating ||
-        _generationStopRequested) {
-      return;
-    }
-    final now = DateTime.now();
-    final last = _lastHapticAt;
-    if (last != null && now.difference(last).inMilliseconds < 45) return;
-    _lastHapticAt = now;
-    if (deltaChars >= 260) {
-      unawaited(HapticFeedback.heavyImpact());
-    } else if (deltaChars >= 90) {
-      unawaited(HapticFeedback.mediumImpact());
-    } else {
-      unawaited(HapticFeedback.lightImpact());
-    }
-  }
-
   void _pulseLiveOutput() {
     _setLiveOutputLevel(
       liveOutputLevel < 0.32 ? 0.32 : liveOutputLevel,
@@ -1533,34 +1511,97 @@ class AdoetzAppState extends ChangeNotifier {
 
   void _maybeSaveUserMemory(String text) {
     if (!genSettings.memoryEnabled) return;
-    final name = _extractRememberedName(text);
-    if (name != null) {
-      final pretty = name.substring(0, 1).toUpperCase() + name.substring(1);
-      saveMemory("The user's name is $pretty.");
-      return;
+    final actions = const MemoryAgent().analyze(
+      message: text,
+      existingMemories: memories,
+    );
+    _applyMemoryActions(actions);
+  }
+
+  void _applyMemoryActions(List<MemoryAgentAction> actions) {
+    var next = [...memories];
+    var changed = false;
+    for (final action in actions) {
+      if (action.action == 'ignore') continue;
+      if (action.action == 'delete') {
+        final before = next.length;
+        next = next
+            .where((memory) => !_memoryMatchesKey(memory, action.key))
+            .toList();
+        changed = changed || next.length != before;
+        continue;
+      }
+      if (!action.applies || action.value.trim().isEmpty) continue;
+
+      final clean = action.value.trim();
+      final existingIndex = next.indexWhere(
+        (memory) =>
+            _memoryMatchesKey(memory, action.key) ||
+            _normalizeMemory(memory.content) == _normalizeMemory(clean),
+      );
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (existingIndex == -1) {
+        next.insert(
+          0,
+          Memory(
+            id: '$now-${next.length}',
+            content: clean,
+            timestamp: now,
+            key: action.key,
+            type: action.type,
+            scope: action.scope,
+            sensitivity: action.sensitivity,
+          ),
+        );
+        changed = true;
+        continue;
+      }
+
+      final existing = next[existingIndex];
+      if (existing.content != clean ||
+          existing.key != action.key ||
+          existing.type != action.type ||
+          existing.scope != action.scope ||
+          existing.sensitivity != action.sensitivity) {
+        next[existingIndex] = existing.copyWith(
+          content: clean,
+          timestamp: now,
+          key: action.key,
+          type: action.type,
+          scope: action.scope,
+          sensitivity: action.sensitivity,
+        );
+        changed = true;
+      }
     }
-    final remember = RegExp(
-      r'\bremember(?: that)?\s+(.{3,220})',
-      caseSensitive: false,
-    ).firstMatch(text);
-    if (remember != null) {
-      final content = remember
-          .group(1)!
-          .replaceAll(RegExp(r'\s+'), ' ')
-          .trim()
-          .replaceAll(RegExp(r'[.!?]+$'), '');
-      if (content.isNotEmpty) saveMemory(content);
-    }
+
+    if (!changed) return;
+    next.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    memories = next;
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
   }
 
   bool _isDuplicateMemory(String content) {
     final normalized = _normalizeMemory(content);
-    final rememberedName = _extractRememberedName(content);
+    final key = Memory.inferKey(content);
     return memories.any((memory) {
       if (_normalizeMemory(memory.content) == normalized) return true;
-      return rememberedName != null &&
-          _extractRememberedName(memory.content) == rememberedName;
+      return key.isNotEmpty && _memoryMatchesKey(memory, key);
     });
+  }
+
+  bool _memoryMatchesKey(Memory memory, String key) {
+    if (key.isEmpty || key == 'none') return false;
+    final memoryKey = memory.key.isNotEmpty
+        ? memory.key
+        : Memory.inferKey(memory.content);
+    if (memoryKey == key) return true;
+    if (key == 'preferred_framework' &&
+        memoryKey == 'preferred_mobile_framework') {
+      return true;
+    }
+    return false;
   }
 
   String _normalizeMemory(String content) => content
@@ -1568,14 +1609,6 @@ class AdoetzAppState extends ChangeNotifier {
       .replaceAll(RegExp(r'[^\w\s-]'), '')
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
-
-  String? _extractRememberedName(String content) {
-    final normalized = _normalizeMemory(content);
-    final match = RegExp(
-      r"\b(?:user is named|users name is|user name is|my name is|i am|im|i'm)\s+([a-z0-9_-]{2,})\b",
-    ).firstMatch(normalized);
-    return match?.group(1);
-  }
 
   Future<void> _persist() async {
     await _storage.save(buildState());

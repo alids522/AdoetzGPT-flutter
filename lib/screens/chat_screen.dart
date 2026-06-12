@@ -26,6 +26,7 @@ import '../widgets/artifact_preview.dart';
 import '../translations.dart';
 import '../ui/app_theme.dart';
 import '../widgets/live_camera_feed.dart';
+import '../widgets/streaming_text_renderer.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -876,9 +877,20 @@ class _MessageBubble extends StatelessWidget {
                           palette: p,
                         )
                       else if (streamingAssistant)
-                        _StreamingPlainMessage(
-                          data: parsed.mainContent,
-                          palette: p,
+                        StreamingTextRenderer(
+                          key: ValueKey('stream-${message.id}'),
+                          receivedText: parsed.mainContent,
+                          isStreaming: true,
+                          enableHaptics: app.genSettings.hapticStreamingEnabled,
+                          accentColor: p.primary,
+                          textStyle: TextStyle(
+                            color: p.isDark
+                                ? const Color(0xFFD1D5DB)
+                                : p.onSurface,
+                            height: 1.58,
+                            fontSize: 15,
+                            fontWeight: FontWeight.normal,
+                          ),
                         )
                       else
                         _MarkdownMessage(data: parsed.mainContent, palette: p),
@@ -1097,34 +1109,6 @@ class _ThoughtBlockState extends State<_ThoughtBlock> {
         ],
       ),
     );
-  }
-}
-
-class _StreamingPlainMessage extends StatelessWidget {
-  const _StreamingPlainMessage({required this.data, required this.palette});
-
-  final String data;
-  final AppPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    final visible = _visibleStreamingText(data);
-    return Text(
-      visible,
-      style: TextStyle(
-        color: palette.isDark ? const Color(0xFFD1D5DB) : palette.onSurface,
-        height: 1.58,
-        fontSize: 15,
-        fontWeight: FontWeight.normal,
-      ),
-    );
-  }
-
-  String _visibleStreamingText(String value) {
-    if (value.length <= 9000) return value;
-    final head = value.substring(0, 4200).trimRight();
-    final tail = value.substring(value.length - 3600).trimLeft();
-    return '$head\n\n...\n\n$tail';
   }
 }
 
