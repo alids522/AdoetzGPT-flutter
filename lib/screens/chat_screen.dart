@@ -746,6 +746,8 @@ class _MessageBubble extends StatelessWidget {
         ? math.min(620.0, laneWidth * 0.72)
         : laneWidth;
     final animateBubble = message.isUser && !editing;
+    final streamingAssistant =
+        !message.isUser && isLast && app.isGenerating && !editing;
 
     final bubble = Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
@@ -843,7 +845,7 @@ class _MessageBubble extends StatelessWidget {
                             height: 1.45,
                           ),
                         )
-                      else if (parsed.mainContent.isEmpty && app.isGenerating)
+                      else if (parsed.mainContent.isEmpty && streamingAssistant)
                         const Padding(
                           padding: EdgeInsets.symmetric(
                             horizontal: 16,
@@ -851,7 +853,7 @@ class _MessageBubble extends StatelessWidget {
                           ),
                           child: _PolygonProgressionLoading(),
                         )
-                      else if (app.isGenerating &&
+                      else if (streamingAssistant &&
                           parsed.mainContent.length < 150 &&
                           !parsed.mainContent.contains('\n') &&
                           (parsed.mainContent.toLowerCase().startsWith(
@@ -871,6 +873,11 @@ class _MessageBubble extends StatelessWidget {
                               )))
                         _SearchStatusPill(
                           status: parsed.mainContent,
+                          palette: p,
+                        )
+                      else if (streamingAssistant)
+                        _StreamingPlainMessage(
+                          data: parsed.mainContent,
                           palette: p,
                         )
                       else
@@ -1090,6 +1097,34 @@ class _ThoughtBlockState extends State<_ThoughtBlock> {
         ],
       ),
     );
+  }
+}
+
+class _StreamingPlainMessage extends StatelessWidget {
+  const _StreamingPlainMessage({required this.data, required this.palette});
+
+  final String data;
+  final AppPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = _visibleStreamingText(data);
+    return Text(
+      visible,
+      style: TextStyle(
+        color: palette.isDark ? const Color(0xFFD1D5DB) : palette.onSurface,
+        height: 1.58,
+        fontSize: 15,
+        fontWeight: FontWeight.normal,
+      ),
+    );
+  }
+
+  String _visibleStreamingText(String value) {
+    if (value.length <= 9000) return value;
+    final head = value.substring(0, 4200).trimRight();
+    final tail = value.substring(value.length - 3600).trimLeft();
+    return '$head\n\n...\n\n$tail';
   }
 }
 

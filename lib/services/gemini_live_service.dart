@@ -40,8 +40,6 @@ class GeminiLiveService {
   static const _inputSampleRate = 24000;
   static const _outputSampleRate = 24000;
   static const _outputLevelWindow = Duration(milliseconds: 80);
-  static const _echoGuardTail = Duration(milliseconds: 260);
-  static const _bargeInRawLevel = 0.11;
   static const _inputMimeType = 'audio/pcm;rate=$_inputSampleRate';
   static const _liveEndpointPath =
       '/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
@@ -72,9 +70,7 @@ class GeminiLiveService {
   Completer<void>? _setupCompleter;
   final List<Timer> _outputLevelTimers = [];
   DateTime _nextOutputLevelAt = DateTime.fromMillisecondsSinceEpoch(0);
-  DateTime _suppressLowMicUntil = DateTime.fromMillisecondsSinceEpoch(0);
   int _lastVideoFrameMs = 0;
-  int _bargeInFrames = 0;
   bool _running = false;
   bool _recording = false;
   bool _closed = false;
@@ -163,9 +159,6 @@ class GeminiLiveService {
       (bytes) {
         if (!_running || !_recording || bytes.isEmpty) return;
         final level = _pcmLevel(bytes);
-        if (_shouldSuppressMicChunk(level)) {
-          return;
-        }
 
         _send({
           'realtimeInput': {
@@ -416,26 +409,10 @@ class GeminiLiveService {
     }
 
     _nextOutputLevelAt = cursor;
-    _suppressLowMicUntil = cursor.add(_echoGuardTail);
     _scheduleOutputLevelTimer(
       cursor.add(const Duration(milliseconds: 180)).difference(now),
       0,
     );
-  }
-
-  bool _shouldSuppressMicChunk(double level) {
-    if (!DateTime.now().isBefore(_suppressLowMicUntil)) {
-      _bargeInFrames = 0;
-      return false;
-    }
-    if (level < _bargeInRawLevel) {
-      _bargeInFrames = 0;
-      onLevel(0);
-      return true;
-    }
-    _bargeInFrames += 1;
-    onLevel(level);
-    return _bargeInFrames < 2;
   }
 
   void _scheduleOutputLevelTimer(Duration delay, double level) {
@@ -454,8 +431,6 @@ class GeminiLiveService {
     }
     _outputLevelTimers.clear();
     _nextOutputLevelAt = DateTime.now();
-    _suppressLowMicUntil = DateTime.fromMillisecondsSinceEpoch(0);
-    _bargeInFrames = 0;
     if (reset) onOutputLevel(0);
   }
 

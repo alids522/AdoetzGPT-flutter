@@ -113,7 +113,7 @@ class MainActivity : FlutterActivity() {
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT
         )
-        val bufferSize = maxOf(minBuffer, sampleRate * 2)
+        val bufferSize = maxOf(minBuffer, sampleRate / 5)
         val attributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)

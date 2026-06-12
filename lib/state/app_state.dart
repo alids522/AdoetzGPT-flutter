@@ -1199,10 +1199,16 @@ class AdoetzAppState extends ChangeNotifier {
   ) {
     if (_activeGenerationId != generationId || _generationStopRequested) return;
     _pendingStreamText = text;
-    _streamFlushTimer ??= Timer(const Duration(milliseconds: 140), () {
+    _streamFlushTimer ??= Timer(_streamFlushDelay(text.length), () {
       _streamFlushTimer = null;
       _flushStreamText(generationId, sessionId, botId);
     });
+  }
+
+  Duration _streamFlushDelay(int textLength) {
+    if (textLength > 12000) return const Duration(milliseconds: 160);
+    if (textLength > 6000) return const Duration(milliseconds: 120);
+    return const Duration(milliseconds: 80);
   }
 
   void _flushStreamText(
@@ -1454,9 +1460,15 @@ class AdoetzAppState extends ChangeNotifier {
     }
     final now = DateTime.now();
     final last = _lastHapticAt;
-    if (last != null && now.difference(last).inMilliseconds < 90) return;
+    if (last != null && now.difference(last).inMilliseconds < 45) return;
     _lastHapticAt = now;
-    unawaited(HapticFeedback.lightImpact());
+    if (deltaChars >= 260) {
+      unawaited(HapticFeedback.heavyImpact());
+    } else if (deltaChars >= 90) {
+      unawaited(HapticFeedback.mediumImpact());
+    } else {
+      unawaited(HapticFeedback.lightImpact());
+    }
   }
 
   void _pulseLiveOutput() {
