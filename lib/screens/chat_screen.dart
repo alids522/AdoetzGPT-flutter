@@ -16,6 +16,7 @@ import 'package:provider/provider.dart';
 import 'package:archive/archive.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models.dart';
 import '../services/ai_service.dart';
@@ -1301,6 +1302,11 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
               child: MarkdownBody(
                 data: processedContent,
                 selectable: true,
+                onTapLink: (text, href, title) {
+                  if (href != null) {
+                    launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
+                  }
+                },
                 styleSheet: _markdownStyle(context, widget.palette),
                 builders: {
                   'code': _InlineCodeBuilder(widget.palette),
