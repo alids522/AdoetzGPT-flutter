@@ -1307,6 +1307,25 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
                     launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
                   }
                 },
+                imageBuilder: (uri, title, alt) {
+                  if (uri.scheme == 'data') {
+                    try {
+                      final bytes = uri.data?.contentAsBytes();
+                      if (bytes != null) {
+                        return Image.memory(
+                          bytes,
+                          errorBuilder: (context, error, stackTrace) =>
+                              const Icon(Icons.broken_image, color: Colors.grey),
+                        );
+                      }
+                    } catch (_) {}
+                  }
+                  return Image.network(
+                    uri.toString(),
+                    errorBuilder: (context, error, stackTrace) =>
+                        const Icon(Icons.broken_image, color: Colors.grey),
+                  );
+                },
                 styleSheet: _markdownStyle(context, widget.palette),
                 builders: {
                   'code': _InlineCodeBuilder(widget.palette),
