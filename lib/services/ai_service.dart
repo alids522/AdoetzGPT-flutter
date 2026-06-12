@@ -226,7 +226,9 @@ class AiService {
       headers['Authorization'] = 'Bearer ${endpoint.key}';
     }
     final payload = {
-      'model': endpoint.models.isNotEmpty ? endpoint.models.first : 'hermes-agent',
+      'model': endpoint.models.isNotEmpty 
+          ? endpoint.models.first 
+          : endpoint.name.toLowerCase().replaceAll(' ', '-'),
       'messages': [{'role': 'user', 'content': 'ping'}],
       'max_tokens': 1,
     };
@@ -240,6 +242,10 @@ class AiService {
     final streamed = await _sendWithProxyFallback(request, syncSettings);
     if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
       final body = await streamed.stream.bytesToString();
+      // 400 Bad Request for an invalid model (like OpenClaw) proves the server is online
+      if (streamed.statusCode == 400 && body.toLowerCase().contains('model')) {
+        return;
+      }
       throw Exception(_extractApiError(body, 'Ping failed (${streamed.statusCode})'));
     }
   }

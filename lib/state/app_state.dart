@@ -859,7 +859,7 @@ class AdoetzAppState extends ChangeNotifier {
           // If ping succeeds, use existing targets or default to agent name
           names = connector.targets.isNotEmpty 
               ? connector.targets.map((t) => t.modelId).toList()
-              : ['hermes-agent'];
+              : [connector.name.toLowerCase().replaceAll(' ', '-')];
         } else {
           rethrow;
         }
