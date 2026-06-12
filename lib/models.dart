@@ -40,6 +40,119 @@ List<Map<String, dynamic>> mapList(Object? value) {
   return const [];
 }
 
+enum ChatTargetType { model, agentServer }
+
+ChatTargetType chatTargetTypeFromJson(Object? value) {
+  final text = stringValue(value, 'model').trim().toLowerCase();
+  return text == 'agent_server' || text == 'agentserver'
+      ? ChatTargetType.agentServer
+      : ChatTargetType.model;
+}
+
+String chatTargetTypeCode(ChatTargetType value) =>
+    value == ChatTargetType.agentServer ? 'agent_server' : 'model';
+
+enum ConnectorStatus {
+  online,
+  offline,
+  authFailed,
+  timeout,
+  unknown,
+  streamingFailed,
+  syncFailed,
+}
+
+ConnectorStatus connectorStatusFromJson(Object? value) {
+  final text = stringValue(value, 'unknown').trim().toLowerCase();
+  return switch (text) {
+    'online' => ConnectorStatus.online,
+    'offline' => ConnectorStatus.offline,
+    'auth_failed' || 'authfailed' => ConnectorStatus.authFailed,
+    'timeout' => ConnectorStatus.timeout,
+    'streaming_failed' || 'streamingfailed' => ConnectorStatus.streamingFailed,
+    'sync_failed' || 'syncfailed' => ConnectorStatus.syncFailed,
+    _ => ConnectorStatus.unknown,
+  };
+}
+
+String connectorStatusCode(ConnectorStatus value) => switch (value) {
+  ConnectorStatus.online => 'online',
+  ConnectorStatus.offline => 'offline',
+  ConnectorStatus.authFailed => 'auth_failed',
+  ConnectorStatus.timeout => 'timeout',
+  ConnectorStatus.streamingFailed => 'streaming_failed',
+  ConnectorStatus.syncFailed => 'sync_failed',
+  ConnectorStatus.unknown => 'unknown',
+};
+
+String connectorStatusLabel(ConnectorStatus value) => switch (value) {
+  ConnectorStatus.online => 'Online',
+  ConnectorStatus.offline => 'Offline',
+  ConnectorStatus.authFailed => 'Auth failed',
+  ConnectorStatus.timeout => 'Timeout',
+  ConnectorStatus.streamingFailed => 'Streaming failed',
+  ConnectorStatus.syncFailed => 'Sync failed',
+  ConnectorStatus.unknown => 'Unknown',
+};
+
+enum ConnectorType { openclawGateway, hermesAgent, genericOpenAiCompatible }
+
+ConnectorType connectorTypeFromJson(Object? value) {
+  final text = stringValue(
+    value,
+    'generic_openai_compatible',
+  ).trim().toLowerCase();
+  return switch (text) {
+    'openclaw_gateway' || 'openclaw' => ConnectorType.openclawGateway,
+    'hermes_agent' || 'hermes' => ConnectorType.hermesAgent,
+    _ => ConnectorType.genericOpenAiCompatible,
+  };
+}
+
+String connectorTypeCode(ConnectorType value) => switch (value) {
+  ConnectorType.openclawGateway => 'openclaw_gateway',
+  ConnectorType.hermesAgent => 'hermes_agent',
+  ConnectorType.genericOpenAiCompatible => 'generic_openai_compatible',
+};
+
+String connectorTypeLabel(ConnectorType value) => switch (value) {
+  ConnectorType.openclawGateway => 'OpenClaw',
+  ConnectorType.hermesAgent => 'Hermes',
+  ConnectorType.genericOpenAiCompatible => 'OpenAI Compatible',
+};
+
+enum ToolPermissionMode {
+  toolsDisabled,
+  safeAuto,
+  askBeforeWrite,
+  askBeforeEveryTool,
+}
+
+ToolPermissionMode toolPermissionModeFromJson(Object? value) {
+  final text = stringValue(value, 'ask_before_write').trim().toLowerCase();
+  return switch (text) {
+    'tools_disabled' || 'disabled' => ToolPermissionMode.toolsDisabled,
+    'safe_auto' || 'safe' => ToolPermissionMode.safeAuto,
+    'ask_before_every_tool' ||
+    'ask_every' => ToolPermissionMode.askBeforeEveryTool,
+    _ => ToolPermissionMode.askBeforeWrite,
+  };
+}
+
+String toolPermissionModeCode(ToolPermissionMode value) => switch (value) {
+  ToolPermissionMode.toolsDisabled => 'tools_disabled',
+  ToolPermissionMode.safeAuto => 'safe_auto',
+  ToolPermissionMode.askBeforeWrite => 'ask_before_write',
+  ToolPermissionMode.askBeforeEveryTool => 'ask_before_every_tool',
+};
+
+String toolPermissionModeLabel(ToolPermissionMode value) => switch (value) {
+  ToolPermissionMode.toolsDisabled => 'Tools disabled',
+  ToolPermissionMode.safeAuto => 'Safe auto',
+  ToolPermissionMode.askBeforeWrite => 'Ask before write',
+  ToolPermissionMode.askBeforeEveryTool => 'Ask before every tool',
+};
+
 class AttachmentData {
   const AttachmentData({
     required this.name,
@@ -79,6 +192,12 @@ class Message {
     this.model,
     this.attachments = const [],
     this.tokenCount,
+    this.targetId,
+    this.targetType,
+    this.targetName,
+    this.connectorId,
+    this.modelOrAgentId,
+    this.toolEventIds = const [],
   });
 
   final String id;
@@ -88,8 +207,15 @@ class Message {
   final String? model;
   final List<AttachmentData> attachments;
   final int? tokenCount;
+  final String? targetId;
+  final ChatTargetType? targetType;
+  final String? targetName;
+  final String? connectorId;
+  final String? modelOrAgentId;
+  final List<String> toolEventIds;
 
   bool get isUser => sender == 'user';
+  bool get isSystem => sender == 'system';
 
   Message copyWith({
     String? text,
@@ -98,8 +224,15 @@ class Message {
     String? model,
     List<AttachmentData>? attachments,
     int? tokenCount,
+    String? targetId,
+    ChatTargetType? targetType,
+    String? targetName,
+    String? connectorId,
+    String? modelOrAgentId,
+    List<String>? toolEventIds,
     bool clearModel = false,
     bool clearTokenCount = false,
+    bool clearTarget = false,
   }) {
     return Message(
       id: id,
@@ -109,6 +242,14 @@ class Message {
       model: clearModel ? null : model ?? this.model,
       attachments: attachments ?? this.attachments,
       tokenCount: clearTokenCount ? null : tokenCount ?? this.tokenCount,
+      targetId: clearTarget ? null : targetId ?? this.targetId,
+      targetType: clearTarget ? null : targetType ?? this.targetType,
+      targetName: clearTarget ? null : targetName ?? this.targetName,
+      connectorId: clearTarget ? null : connectorId ?? this.connectorId,
+      modelOrAgentId: clearTarget
+          ? null
+          : modelOrAgentId ?? this.modelOrAgentId,
+      toolEventIds: clearTarget ? const [] : toolEventIds ?? this.toolEventIds,
     );
   }
 
@@ -125,6 +266,34 @@ class Message {
       tokenCount: json['tokenCount'] == null
           ? null
           : intValue(json['tokenCount']),
+      targetId: json['target_id'] == null && json['targetId'] == null
+          ? null
+          : stringValue(json['target_id'], stringValue(json['targetId'])),
+      targetType: json['target_type'] == null && json['targetType'] == null
+          ? null
+          : chatTargetTypeFromJson(json['target_type'] ?? json['targetType']),
+      targetName: json['target_name'] == null && json['targetName'] == null
+          ? null
+          : stringValue(json['target_name'], stringValue(json['targetName'])),
+      connectorId: json['connector_id'] == null && json['connectorId'] == null
+          ? null
+          : stringValue(json['connector_id'], stringValue(json['connectorId'])),
+      modelOrAgentId:
+          json['model_or_agent_id'] == null && json['modelOrAgentId'] == null
+          ? null
+          : stringValue(
+              json['model_or_agent_id'],
+              stringValue(json['modelOrAgentId']),
+            ),
+      toolEventIds: (json['tool_event_ids'] is List)
+          ? (json['tool_event_ids'] as List)
+                .map((item) => item.toString())
+                .toList()
+          : (json['toolEventIds'] is List)
+          ? (json['toolEventIds'] as List)
+                .map((item) => item.toString())
+                .toList()
+          : const [],
     );
   }
 
@@ -137,6 +306,12 @@ class Message {
     if (attachments.isNotEmpty)
       'attachments': attachments.map((item) => item.toJson()).toList(),
     if (tokenCount != null) 'tokenCount': tokenCount,
+    if (targetId != null) 'target_id': targetId,
+    if (targetType != null) 'target_type': chatTargetTypeCode(targetType!),
+    if (targetName != null) 'target_name': targetName,
+    if (connectorId != null) 'connector_id': connectorId,
+    if (modelOrAgentId != null) 'model_or_agent_id': modelOrAgentId,
+    if (toolEventIds.isNotEmpty) 'tool_event_ids': toolEventIds,
   };
 }
 
@@ -145,56 +320,131 @@ class Session {
     required this.id,
     required this.title,
     required this.messages,
+    required this.createdAt,
     required this.updatedAt,
     this.pinned = false,
     this.deleted = false,
+    this.currentTargetId = '',
+    this.startedWithTargetId = '',
+    this.lastTargetId = '',
+    this.targetHistory = const [],
+    this.handoffSummary = '',
+    this.targetSwitchEvents = const [],
   });
 
   final String id;
   final String title;
   final List<Message> messages;
+  final int createdAt;
   final int updatedAt;
   final bool pinned;
   final bool deleted;
+  final String currentTargetId;
+  final String startedWithTargetId;
+  final String lastTargetId;
+  final List<String> targetHistory;
+  final String handoffSummary;
+  final List<TargetSwitchEvent> targetSwitchEvents;
 
   Session copyWith({
     String? title,
     List<Message>? messages,
+    int? createdAt,
     int? updatedAt,
     bool? pinned,
     bool? deleted,
+    String? currentTargetId,
+    String? startedWithTargetId,
+    String? lastTargetId,
+    List<String>? targetHistory,
+    String? handoffSummary,
+    List<TargetSwitchEvent>? targetSwitchEvents,
   }) {
     return Session(
       id: id,
       title: title ?? this.title,
       messages: messages ?? this.messages,
+      createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       pinned: pinned ?? this.pinned,
       deleted: deleted ?? this.deleted,
+      currentTargetId: currentTargetId ?? this.currentTargetId,
+      startedWithTargetId: startedWithTargetId ?? this.startedWithTargetId,
+      lastTargetId: lastTargetId ?? this.lastTargetId,
+      targetHistory: targetHistory ?? this.targetHistory,
+      handoffSummary: handoffSummary ?? this.handoffSummary,
+      targetSwitchEvents: targetSwitchEvents ?? this.targetSwitchEvents,
     );
   }
 
-  factory Session.empty([String? id]) {
+  factory Session.empty([String? id, String? targetId]) {
     final now = DateTime.now().millisecondsSinceEpoch;
+    final effectiveTargetId = targetId ?? '';
     return Session(
       id: id ?? now.toString(),
-      title: 'New Session',
+      title: effectiveTargetId.startsWith('agent:')
+          ? 'New Agent Chat'
+          : 'New Chat',
       messages: const [],
+      createdAt: now,
       updatedAt: now,
+      currentTargetId: effectiveTargetId,
+      startedWithTargetId: effectiveTargetId,
+      lastTargetId: effectiveTargetId,
+      targetHistory: effectiveTargetId.isEmpty ? const [] : [effectiveTargetId],
     );
   }
 
   factory Session.fromJson(Map<String, dynamic> json) {
+    final updatedAt = intValue(
+      json['updatedAt'],
+      DateTime.now().millisecondsSinceEpoch,
+    );
+    final currentTargetId = stringValue(
+      json['current_target_id'],
+      stringValue(json['currentTargetId']),
+    );
+    final startedWithTargetId = stringValue(
+      json['started_with_target_id'],
+      stringValue(json['startedWithTargetId'], currentTargetId),
+    );
+    final lastTargetId = stringValue(
+      json['last_target_id'],
+      stringValue(json['lastTargetId'], currentTargetId),
+    );
+    final targetHistory = (json['target_history'] is List)
+        ? (json['target_history'] as List)
+              .map((item) => item.toString())
+              .where((item) => item.isNotEmpty)
+              .toList()
+        : (json['targetHistory'] is List)
+        ? (json['targetHistory'] as List)
+              .map((item) => item.toString())
+              .where((item) => item.isNotEmpty)
+              .toList()
+        : const <String>[];
     return Session(
       id: stringValue(json['id']),
-      title: stringValue(json['title'], 'New Session'),
+      title: stringValue(json['title'], 'New Chat'),
       messages: mapList(json['messages']).map(Message.fromJson).toList(),
-      updatedAt: intValue(
-        json['updatedAt'],
-        DateTime.now().millisecondsSinceEpoch,
+      createdAt: intValue(
+        json['createdAt'],
+        intValue(json['created_at'], updatedAt),
       ),
+      updatedAt: updatedAt,
       pinned: boolValue(json['pinned']),
       deleted: boolValue(json['deleted']),
+      currentTargetId: currentTargetId,
+      startedWithTargetId: startedWithTargetId,
+      lastTargetId: lastTargetId,
+      targetHistory: targetHistory,
+      handoffSummary: stringValue(
+        json['handoff_summary'],
+        stringValue(json['handoffSummary']),
+      ),
+      targetSwitchEvents: mapList(
+        json['target_switch_events'] ?? json['targetSwitchEvents'],
+      ).map(TargetSwitchEvent.fromJson).toList(),
     );
   }
 
@@ -202,9 +452,20 @@ class Session {
     'id': id,
     'title': title,
     'messages': messages.map((item) => item.toJson()).toList(),
+    'createdAt': createdAt,
     'updatedAt': updatedAt,
     if (pinned) 'pinned': pinned,
     if (deleted) 'deleted': deleted,
+    if (currentTargetId.isNotEmpty) 'current_target_id': currentTargetId,
+    if (startedWithTargetId.isNotEmpty)
+      'started_with_target_id': startedWithTargetId,
+    if (lastTargetId.isNotEmpty) 'last_target_id': lastTargetId,
+    if (targetHistory.isNotEmpty) 'target_history': targetHistory,
+    if (handoffSummary.isNotEmpty) 'handoff_summary': handoffSummary,
+    if (targetSwitchEvents.isNotEmpty)
+      'target_switch_events': targetSwitchEvents
+          .map((event) => event.toJson())
+          .toList(),
   };
 }
 
@@ -271,6 +532,422 @@ class EndpointModel {
 
   final String name;
   final String endpointId;
+}
+
+class ConnectorCapabilities {
+  const ConnectorCapabilities({
+    this.supportsStreaming = true,
+    this.supportsChatCompletions = true,
+    this.supportsResponsesApi = false,
+    this.supportsModelsEndpoint = true,
+    this.supportsTools = false,
+    this.rawCapabilitiesJson = const {},
+  });
+
+  final bool supportsStreaming;
+  final bool supportsChatCompletions;
+  final bool supportsResponsesApi;
+  final bool supportsModelsEndpoint;
+  final bool supportsTools;
+  final Map<String, dynamic> rawCapabilitiesJson;
+
+  ConnectorCapabilities copyWith({
+    bool? supportsStreaming,
+    bool? supportsChatCompletions,
+    bool? supportsResponsesApi,
+    bool? supportsModelsEndpoint,
+    bool? supportsTools,
+    Map<String, dynamic>? rawCapabilitiesJson,
+  }) {
+    return ConnectorCapabilities(
+      supportsStreaming: supportsStreaming ?? this.supportsStreaming,
+      supportsChatCompletions:
+          supportsChatCompletions ?? this.supportsChatCompletions,
+      supportsResponsesApi: supportsResponsesApi ?? this.supportsResponsesApi,
+      supportsModelsEndpoint:
+          supportsModelsEndpoint ?? this.supportsModelsEndpoint,
+      supportsTools: supportsTools ?? this.supportsTools,
+      rawCapabilitiesJson: rawCapabilitiesJson ?? this.rawCapabilitiesJson,
+    );
+  }
+
+  factory ConnectorCapabilities.fromJson(Map<String, dynamic>? json) {
+    if (json == null) return const ConnectorCapabilities();
+    return ConnectorCapabilities(
+      supportsStreaming: boolValue(json['supports_streaming'], true),
+      supportsChatCompletions: boolValue(
+        json['supports_chat_completions'],
+        true,
+      ),
+      supportsResponsesApi: boolValue(json['supports_responses_api']),
+      supportsModelsEndpoint: boolValue(json['supports_models_endpoint'], true),
+      supportsTools: boolValue(json['supports_tools']),
+      rawCapabilitiesJson: json['raw_capabilities_json'] is Map
+          ? Map<String, dynamic>.from(json['raw_capabilities_json'])
+          : const {},
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'supports_streaming': supportsStreaming,
+    'supports_chat_completions': supportsChatCompletions,
+    'supports_responses_api': supportsResponsesApi,
+    'supports_models_endpoint': supportsModelsEndpoint,
+    'supports_tools': supportsTools,
+    'raw_capabilities_json': rawCapabilitiesJson,
+  };
+}
+
+class ConnectorTarget {
+  const ConnectorTarget({
+    required this.id,
+    required this.connectorId,
+    required this.modelId,
+    required this.displayName,
+    this.enabled = true,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final String id;
+  final String connectorId;
+  final String modelId;
+  final String displayName;
+  final bool enabled;
+  final int createdAt;
+  final int updatedAt;
+
+  ConnectorTarget copyWith({
+    String? id,
+    String? connectorId,
+    String? modelId,
+    String? displayName,
+    bool? enabled,
+    int? createdAt,
+    int? updatedAt,
+  }) {
+    return ConnectorTarget(
+      id: id ?? this.id,
+      connectorId: connectorId ?? this.connectorId,
+      modelId: modelId ?? this.modelId,
+      displayName: displayName ?? this.displayName,
+      enabled: enabled ?? this.enabled,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  factory ConnectorTarget.fromJson(Map<String, dynamic> json) {
+    final modelId = stringValue(json['model_id'], stringValue(json['modelId']));
+    final now = DateTime.now().millisecondsSinceEpoch;
+    return ConnectorTarget(
+      id: stringValue(
+        json['id'],
+        '${stringValue(json['connector_id'], stringValue(json['connectorId']))}:$modelId',
+      ),
+      connectorId: stringValue(
+        json['connector_id'],
+        stringValue(json['connectorId']),
+      ),
+      modelId: modelId,
+      displayName: stringValue(
+        json['display_name'],
+        stringValue(json['displayName'], modelId),
+      ),
+      enabled: boolValue(json['enabled'], true),
+      createdAt: intValue(json['created_at'], intValue(json['createdAt'], now)),
+      updatedAt: intValue(json['updated_at'], intValue(json['updatedAt'], now)),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'connector_id': connectorId,
+    'model_id': modelId,
+    'display_name': displayName,
+    'enabled': enabled,
+    'created_at': createdAt,
+    'updated_at': updatedAt,
+  };
+}
+
+class AgentConnector {
+  const AgentConnector({
+    required this.id,
+    this.userId = '',
+    required this.name,
+    this.type = ConnectorType.genericOpenAiCompatible,
+    this.baseUrl = '',
+    this.encryptedApiKey = '',
+    this.enabled = true,
+    this.status = ConnectorStatus.unknown,
+    this.latencyMs,
+    this.lastCheckedAt,
+    this.isDefault = false,
+    required this.createdAt,
+    required this.updatedAt,
+    this.permissionMode = ToolPermissionMode.askBeforeWrite,
+    this.capabilities = const ConnectorCapabilities(),
+    this.targets = const [],
+    this.lastError = '',
+    this.logs = const [],
+  });
+
+  final String id;
+  final String userId;
+  final String name;
+  final ConnectorType type;
+  final String baseUrl;
+  final String encryptedApiKey;
+  final bool enabled;
+  final ConnectorStatus status;
+  final int? latencyMs;
+  final int? lastCheckedAt;
+  final bool isDefault;
+  final int createdAt;
+  final int updatedAt;
+  final ToolPermissionMode permissionMode;
+  final ConnectorCapabilities capabilities;
+  final List<ConnectorTarget> targets;
+  final String lastError;
+  final List<String> logs;
+
+  String get providerLabel => connectorTypeLabel(type);
+
+  AgentConnector copyWith({
+    String? id,
+    String? userId,
+    String? name,
+    ConnectorType? type,
+    String? baseUrl,
+    String? encryptedApiKey,
+    bool? enabled,
+    ConnectorStatus? status,
+    int? latencyMs,
+    int? lastCheckedAt,
+    bool? isDefault,
+    int? createdAt,
+    int? updatedAt,
+    ToolPermissionMode? permissionMode,
+    ConnectorCapabilities? capabilities,
+    List<ConnectorTarget>? targets,
+    String? lastError,
+    List<String>? logs,
+    bool clearLatency = false,
+    bool clearLastCheckedAt = false,
+  }) {
+    return AgentConnector(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      name: name ?? this.name,
+      type: type ?? this.type,
+      baseUrl: baseUrl ?? this.baseUrl,
+      encryptedApiKey: encryptedApiKey ?? this.encryptedApiKey,
+      enabled: enabled ?? this.enabled,
+      status: status ?? this.status,
+      latencyMs: clearLatency ? null : latencyMs ?? this.latencyMs,
+      lastCheckedAt: clearLastCheckedAt
+          ? null
+          : lastCheckedAt ?? this.lastCheckedAt,
+      isDefault: isDefault ?? this.isDefault,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      permissionMode: permissionMode ?? this.permissionMode,
+      capabilities: capabilities ?? this.capabilities,
+      targets: targets ?? this.targets,
+      lastError: lastError ?? this.lastError,
+      logs: logs ?? this.logs,
+    );
+  }
+
+  factory AgentConnector.empty({String? id}) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final connectorId = id ?? now.toString();
+    return AgentConnector(
+      id: connectorId,
+      name: 'New Agent Server',
+      createdAt: now,
+      updatedAt: now,
+    );
+  }
+
+  factory AgentConnector.fromJson(Map<String, dynamic> json) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final id = stringValue(json['id']);
+    return AgentConnector(
+      id: id,
+      userId: stringValue(json['user_id'], stringValue(json['userId'])),
+      name: stringValue(json['name'], 'Agent Server'),
+      type: connectorTypeFromJson(json['type']),
+      baseUrl: stringValue(json['base_url'], stringValue(json['baseUrl'])),
+      encryptedApiKey: stringValue(
+        json['encrypted_api_key'],
+        stringValue(json['encryptedApiKey'], stringValue(json['apiKey'])),
+      ),
+      enabled: boolValue(json['enabled'], true),
+      status: connectorStatusFromJson(json['status']),
+      latencyMs: json['latency_ms'] == null && json['latencyMs'] == null
+          ? null
+          : intValue(json['latency_ms'], intValue(json['latencyMs'])),
+      lastCheckedAt:
+          json['last_checked_at'] == null && json['lastCheckedAt'] == null
+          ? null
+          : intValue(json['last_checked_at'], intValue(json['lastCheckedAt'])),
+      isDefault: boolValue(json['is_default'], boolValue(json['isDefault'])),
+      createdAt: intValue(json['created_at'], intValue(json['createdAt'], now)),
+      updatedAt: intValue(json['updated_at'], intValue(json['updatedAt'], now)),
+      permissionMode: toolPermissionModeFromJson(json['permission_mode']),
+      capabilities: ConnectorCapabilities.fromJson(
+        json['capabilities'] is Map
+            ? Map<String, dynamic>.from(json['capabilities'])
+            : null,
+      ),
+      targets: mapList(json['targets'])
+          .map(ConnectorTarget.fromJson)
+          .map(
+            (target) => target.connectorId.isEmpty
+                ? target.copyWith(connectorId: id)
+                : target,
+          )
+          .toList(),
+      lastError: stringValue(
+        json['last_error'],
+        stringValue(json['lastError']),
+      ),
+      logs: (json['logs'] is List)
+          ? (json['logs'] as List).map((item) => item.toString()).toList()
+          : const [],
+    );
+  }
+
+  Map<String, dynamic> toJson({bool includeSecrets = true}) => {
+    'id': id,
+    'user_id': userId,
+    'name': name,
+    'type': connectorTypeCode(type),
+    'base_url': baseUrl,
+    'encrypted_api_key': includeSecrets ? encryptedApiKey : '',
+    'enabled': enabled,
+    'status': connectorStatusCode(status),
+    if (latencyMs != null) 'latency_ms': latencyMs,
+    if (lastCheckedAt != null) 'last_checked_at': lastCheckedAt,
+    'is_default': isDefault,
+    'created_at': createdAt,
+    'updated_at': updatedAt,
+    'permission_mode': toolPermissionModeCode(permissionMode),
+    'capabilities': capabilities.toJson(),
+    'targets': targets.map((target) => target.toJson()).toList(),
+    if (lastError.isNotEmpty) 'last_error': lastError,
+    if (logs.isNotEmpty) 'logs': logs,
+  };
+}
+
+class ChatTarget {
+  const ChatTarget({
+    required this.id,
+    required this.type,
+    required this.displayName,
+    required this.provider,
+    this.connectorId,
+    this.modelId,
+    this.status = ConnectorStatus.online,
+    this.capabilities = const ConnectorCapabilities(),
+    this.isDefault = false,
+  });
+
+  final String id;
+  final ChatTargetType type;
+  final String displayName;
+  final String provider;
+  final String? connectorId;
+  final String? modelId;
+  final ConnectorStatus status;
+  final ConnectorCapabilities capabilities;
+  final bool isDefault;
+
+  bool get isModel => type == ChatTargetType.model;
+  bool get isAgentServer => type == ChatTargetType.agentServer;
+
+  factory ChatTarget.model(String model, {String provider = 'Model'}) {
+    return ChatTarget(
+      id: 'model:$model',
+      type: ChatTargetType.model,
+      displayName: model,
+      provider: provider,
+      modelId: model,
+    );
+  }
+
+  factory ChatTarget.agent({
+    required AgentConnector connector,
+    ConnectorTarget? target,
+  }) {
+    final enabledTargets = connector.targets
+        .where((item) => item.enabled)
+        .toList();
+    final modelId =
+        target?.modelId ??
+        (enabledTargets.isEmpty ? null : enabledTargets.first.modelId) ??
+        connector.name;
+    return ChatTarget(
+      id: 'agent:${connector.id}',
+      type: ChatTargetType.agentServer,
+      displayName: connector.name,
+      provider: connector.providerLabel,
+      connectorId: connector.id,
+      modelId: modelId,
+      status: connector.status,
+      capabilities: connector.capabilities,
+      isDefault: connector.isDefault,
+    );
+  }
+}
+
+class TargetSwitchEvent {
+  const TargetSwitchEvent({
+    required this.id,
+    required this.chatId,
+    required this.fromTargetId,
+    required this.toTargetId,
+    required this.handoffSummary,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String chatId;
+  final String fromTargetId;
+  final String toTargetId;
+  final String handoffSummary;
+  final int createdAt;
+
+  factory TargetSwitchEvent.fromJson(Map<String, dynamic> json) {
+    return TargetSwitchEvent(
+      id: stringValue(json['id']),
+      chatId: stringValue(json['chat_id'], stringValue(json['chatId'])),
+      fromTargetId: stringValue(
+        json['from_target_id'],
+        stringValue(json['fromTargetId']),
+      ),
+      toTargetId: stringValue(
+        json['to_target_id'],
+        stringValue(json['toTargetId']),
+      ),
+      handoffSummary: stringValue(
+        json['handoff_summary'],
+        stringValue(json['handoffSummary']),
+      ),
+      createdAt: intValue(json['created_at'], intValue(json['createdAt'])),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'chat_id': chatId,
+    'from_target_id': fromTargetId,
+    'to_target_id': toTargetId,
+    'handoff_summary': handoffSummary,
+    'created_at': createdAt,
+  };
 }
 
 class GenerationSettings {
@@ -835,11 +1512,13 @@ class PersistedAppState {
     required this.theme,
     required this.visualTheme,
     required this.selectedModel,
+    required this.selectedTargetId,
     required this.isThinkingMode,
     required this.isArtifactMode,
     required this.userName,
     required this.geminiApiKey,
     required this.endpoints,
+    required this.agentConnectors,
     required this.genSettings,
     required this.voiceSettings,
     required this.sessions,
@@ -860,11 +1539,13 @@ class PersistedAppState {
   final String theme;
   final String visualTheme;
   final String selectedModel;
+  final String selectedTargetId;
   final bool isThinkingMode;
   final bool isArtifactMode;
   final String userName;
   final String geminiApiKey;
   final List<EndpointConfig> endpoints;
+  final List<AgentConnector> agentConnectors;
   final GenerationSettings genSettings;
   final VoiceSettings voiceSettings;
   final List<Session> sessions;
@@ -887,6 +1568,7 @@ class PersistedAppState {
       theme: 'dark',
       visualTheme: 'default',
       selectedModel: 'gemini-2.5-flash',
+      selectedTargetId: 'model:gemini-2.5-flash',
       isThinkingMode: false,
       isArtifactMode: false,
       userName: 'User',
@@ -899,6 +1581,7 @@ class PersistedAppState {
           key: '',
         ),
       ],
+      agentConnectors: const [],
       genSettings: const GenerationSettings(),
       voiceSettings: const VoiceSettings(),
       sessions: [session],
@@ -931,6 +1614,10 @@ class PersistedAppState {
       theme: stringValue(json['theme'], 'dark') == 'light' ? 'light' : 'dark',
       visualTheme: _normalizeVisualTheme(json['visualTheme']),
       selectedModel: stringValue(json['selectedModel'], defaults.selectedModel),
+      selectedTargetId: stringValue(
+        json['selectedTargetId'],
+        stringValue(json['selected_target_id'], ''),
+      ),
       isThinkingMode: boolValue(json['isThinkingMode']),
       isArtifactMode: boolValue(json['isArtifactMode']),
       userName: stringValue(json['userName'], defaults.userName),
@@ -938,6 +1625,9 @@ class PersistedAppState {
       endpoints: mapList(
         json['endpoints'],
       ).map(EndpointConfig.fromJson).toList().ifEmpty(defaults.endpoints),
+      agentConnectors: mapList(
+        json['agentConnectors'] ?? json['agent_connectors'],
+      ).map(AgentConnector.fromJson).toList(),
       genSettings: GenerationSettings.fromJson(
         json['genSettings'] is Map
             ? Map<String, dynamic>.from(json['genSettings'])
@@ -975,6 +1665,7 @@ class PersistedAppState {
     'theme': theme,
     'visualTheme': visualTheme,
     'selectedModel': selectedModel,
+    'selectedTargetId': selectedTargetId,
     'isThinkingMode': isThinkingMode,
     'isArtifactMode': isArtifactMode,
     'userName': userName,
@@ -984,6 +1675,9 @@ class PersistedAppState {
           (item) =>
               includeSecrets ? item.toJson() : item.copyWith(key: '').toJson(),
         )
+        .toList(),
+    'agentConnectors': agentConnectors
+        .map((item) => item.toJson(includeSecrets: includeSecrets))
         .toList(),
     'genSettings': genSettings.toJson(),
     'voiceSettings': voiceSettings.toJson(),

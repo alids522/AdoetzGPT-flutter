@@ -153,6 +153,10 @@ class _HeaderState extends State<_Header> {
     final p = AppPalette.fromBrightness(
       Theme.of(context).brightness == Brightness.dark,
     );
+    final activeTarget = app.activeChatTarget;
+    final showStatusShortcut =
+        (app.syncSettings.enabled && app.syncStatus.isNotEmpty) ||
+        app.agentConnectors.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
       child: Row(
@@ -192,7 +196,7 @@ class _HeaderState extends State<_Header> {
                         children: [
                           Flexible(
                             child: Text(
-                              _formatModelName(app.selectedModel),
+                              app.formatTargetName(activeTarget.displayName),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -202,6 +206,10 @@ class _HeaderState extends State<_Header> {
                               ),
                             ),
                           ),
+                          if (activeTarget.isAgentServer) ...[
+                            const SizedBox(width: 7),
+                            _ConnectorDot(status: activeTarget.status),
+                          ],
                           const SizedBox(width: 5),
                           Icon(
                             LucideIcons.chevronDown,
@@ -228,16 +236,18 @@ class _HeaderState extends State<_Header> {
             ),
             const Spacer(),
           ],
-          if (app.currentView == AppView.chat) ...[
-            const Spacer(),
-          ],
-          if (app.syncSettings.enabled && app.syncStatus.isNotEmpty) ...[
+          if (app.currentView == AppView.chat) ...[const Spacer()],
+          if (showStatusShortcut) ...[
             Tooltip(
-              message: app.syncStatus,
+              message: app.syncStatus.isEmpty
+                  ? 'Connector status'
+                  : app.syncStatus,
               child: _SyncStatusIcon(
-                status: app.syncStatus,
+                status: app.syncStatus.isEmpty
+                    ? 'Connector status'
+                    : app.syncStatus,
                 color: p.onSurfaceVariant.withValues(alpha: 0.72),
-                onTap: () => app.syncNow(),
+                onTap: () => _showConnectorStatus(context),
               ),
             ),
             const SizedBox(width: 8),
@@ -299,7 +309,7 @@ class _HeaderState extends State<_Header> {
               value: app,
               child: SizedBox(
                 width: dropdownWidth,
-                child: _ModelDropdown(
+                child: _ChatTargetDropdown(
                   minWidth: buttonSize.width,
                   maxHeight: maxHeight,
                   compact: compact,
@@ -319,22 +329,100 @@ class _HeaderState extends State<_Header> {
     _modelOverlay = null;
   }
 
-  String _formatModelName(String name) {
-    if (name.toLowerCase() == 'gemini-2.5-flash') return 'Gemini 2.5 Flash';
-    return name
-        .split(RegExp(r'[-_]'))
-        .where((part) => part.isNotEmpty)
-        .map((part) {
-          if (part.toLowerCase() == 'gpt') return 'GPT';
-          return part.substring(0, 1).toUpperCase() + part.substring(1);
-        })
-        .join(' ');
+  void _showConnectorStatus(BuildContext context) {
+    final app = context.read<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: p.isDark ? const Color(0xff111111) : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        child: ChangeNotifierProvider.value(
+          value: app,
+          child: Consumer<AdoetzAppState>(
+            builder: (context, app, _) => Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Icon(LucideIcons.server, size: 18, color: p.primary),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Connected Servers',
+                          style: TextStyle(
+                            color: p.onSurface,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Sync database',
+                        onPressed: app.syncNow,
+                        icon: const Icon(LucideIcons.databaseZap, size: 18),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (app.agentConnectors.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      child: Text(
+                        'No Agent Servers configured yet.',
+                        style: TextStyle(
+                          color: p.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    )
+                  else
+                    ...app.agentConnectors.map(
+                      (connector) => ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: _ConnectorDot(status: connector.status),
+                        title: Text(connector.name),
+                        subtitle: Text(
+                          connector.latencyMs == null
+                              ? connectorStatusLabel(connector.status)
+                              : '${connectorStatusLabel(connector.status)} - ${connector.latencyMs}ms',
+                        ),
+                        trailing: IconButton(
+                          tooltip: 'Test connection',
+                          onPressed: () =>
+                              unawaited(app.testAgentConnector(connector.id)),
+                          icon: const Icon(LucideIcons.refreshCw, size: 16),
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 10),
+                  FilledButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      app.setView(AppView.settings);
+                    },
+                    icon: const Icon(LucideIcons.settings, size: 16),
+                    label: const Text('Manage Connectors'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
-
-class _ModelDropdown extends StatefulWidget {
-  const _ModelDropdown({
+class _ChatTargetDropdown extends StatefulWidget {
+  const _ChatTargetDropdown({
     required this.minWidth,
     required this.maxHeight,
     required this.compact,
@@ -342,7 +430,7 @@ class _ModelDropdown extends StatefulWidget {
   });
 
   @override
-  State<_ModelDropdown> createState() => _ModelDropdownState();
+  State<_ChatTargetDropdown> createState() => _ChatTargetDropdownState();
 
   final double minWidth;
   final double maxHeight;
@@ -350,7 +438,7 @@ class _ModelDropdown extends StatefulWidget {
   final VoidCallback onClose;
 }
 
-class _ModelDropdownState extends State<_ModelDropdown> {
+class _ChatTargetDropdownState extends State<_ChatTargetDropdown> {
   String query = '';
 
   @override
@@ -359,8 +447,20 @@ class _ModelDropdownState extends State<_ModelDropdown> {
     final p = AppPalette.fromBrightness(
       Theme.of(context).brightness == Brightness.dark,
     );
-    final models = app.models
-        .where((model) => model.toLowerCase().contains(query.toLowerCase()))
+    final normalized = query.toLowerCase();
+    final modelTargets = app.modelTargets
+        .where(
+          (target) =>
+              target.displayName.toLowerCase().contains(normalized) ||
+              target.provider.toLowerCase().contains(normalized),
+        )
+        .toList();
+    final agentTargets = app.agentServerTargets
+        .where(
+          (target) =>
+              target.displayName.toLowerCase().contains(normalized) ||
+              target.provider.toLowerCase().contains(normalized),
+        )
         .toList();
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(begin: 0, end: 1),
@@ -407,7 +507,7 @@ class _ModelDropdownState extends State<_ModelDropdown> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Model Selection',
+                          'Choose Chat Target',
                           style: TextStyle(
                             color: p.onSurface,
                             fontSize: 13,
@@ -450,8 +550,8 @@ class _ModelDropdownState extends State<_ModelDropdown> {
                     decoration: InputDecoration(
                       prefixIcon: const Icon(LucideIcons.search, size: 16),
                       hintText: app.language == AppLanguage.en
-                          ? 'Search models...'
-                          : 'Cari model...',
+                          ? 'Search targets...'
+                          : 'Cari target...',
                       isDense: true,
                     ),
                     onChanged: (value) => setState(() => query = value),
@@ -480,13 +580,13 @@ class _ModelDropdownState extends State<_ModelDropdown> {
                     ),
                   ),
                 Flexible(
-                  child: models.isEmpty
+                  child: modelTargets.isEmpty && agentTargets.isEmpty
                       ? Padding(
                           padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
                           child: Text(
                             app.isFetchingModels
                                 ? 'Fetching models...'
-                                : 'No models match your search.',
+                                : 'No targets match your search.',
                             style: TextStyle(
                               color: p.onSurfaceVariant,
                               fontSize: 12,
@@ -494,58 +594,52 @@ class _ModelDropdownState extends State<_ModelDropdown> {
                             ),
                           ),
                         )
-                      : ListView.separated(
+                      : ListView(
                           shrinkWrap: true,
                           padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
-                          itemCount: models.length,
-                          separatorBuilder: (_, _) =>
+                          children: [
+                            if (modelTargets.isNotEmpty)
+                              _TargetSectionLabel(label: 'Models', palette: p),
+                            ...modelTargets.map(
+                              (target) => _TargetTile(
+                                target: target,
+                                selected: target.id == app.activeChatTarget.id,
+                                compact: widget.compact,
+                                palette: p,
+                                onTap: () => _selectTarget(context, target),
+                              ),
+                            ),
+                            if (agentTargets.isNotEmpty) ...[
                               Divider(height: 1, color: p.outline),
-                          itemBuilder: (context, index) {
-                            final model = models[index];
-                            final selected = model == app.selectedModel;
-                            final endpointLabel = _endpointLabel(app, model);
-                            return ListTile(
+                              _TargetSectionLabel(
+                                label: 'Agent Servers',
+                                palette: p,
+                              ),
+                              ...agentTargets.map(
+                                (target) => _TargetTile(
+                                  target: target,
+                                  selected:
+                                      target.id == app.activeChatTarget.id,
+                                  compact: widget.compact,
+                                  palette: p,
+                                  onTap: () => _selectTarget(context, target),
+                                ),
+                              ),
+                            ],
+                            Divider(height: 1, color: p.outline),
+                            ListTile(
                               dense: true,
-                              minVerticalPadding: widget.compact ? 7 : 10,
-                              visualDensity: widget.compact
-                                  ? VisualDensity.compact
-                                  : VisualDensity.standard,
-                              title: Text(
-                                model,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: selected
-                                      ? p.onSurface
-                                      : p.onSurface.withValues(alpha: 0.78),
-                                  fontWeight: selected
-                                      ? FontWeight.w900
-                                      : FontWeight.w600,
-                                ),
+                              leading: const Icon(
+                                LucideIcons.settings,
+                                size: 16,
                               ),
-                              subtitle: Text(
-                                endpointLabel,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: p.onSurfaceVariant,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              trailing: selected
-                                  ? Icon(
-                                      LucideIcons.check,
-                                      color: p.primary,
-                                      size: 18,
-                                    )
-                                  : null,
+                              title: const Text('Manage Connectors'),
                               onTap: () {
-                                app.setSelectedModel(model);
                                 widget.onClose();
+                                app.setView(AppView.settings);
                               },
-                            );
-                          },
+                            ),
+                          ],
                         ),
                 ),
               ],
@@ -556,21 +650,194 @@ class _ModelDropdownState extends State<_ModelDropdown> {
     );
   }
 
-  String _endpointLabel(AdoetzAppState app, String model) {
-    EndpointModel? endpointModel;
-    for (final item in app.endpointModels) {
-      if (item.name == model) {
-        endpointModel = item;
-        break;
-      }
+  Future<void> _selectTarget(BuildContext context, ChatTarget target) async {
+    final app = context.read<AdoetzAppState>();
+    final rootContext = Navigator.of(context, rootNavigator: true).context;
+    widget.onClose();
+    if (!app.requiresTargetSwitchConfirmation(target)) {
+      app.applyChatTarget(target, insertDivider: false);
+      return;
     }
-    if (endpointModel == null) return 'Gemini';
-    for (final endpoint in app.endpoints) {
-      if (endpoint.id == endpointModel.endpointId) {
-        return endpoint.name.trim().isEmpty ? 'Endpoint' : endpoint.name;
-      }
+    await Future<void>.delayed(Duration.zero);
+    if (!rootContext.mounted) return;
+    final action = await _showTargetSwitchSheet(rootContext, app, target);
+    if (action == 'continue') {
+      app.applyChatTarget(target);
+    } else if (action == 'fork') {
+      app.applyChatTarget(target, fork: true);
     }
-    return 'Endpoint';
+  }
+
+  Future<String?> _showTargetSwitchSheet(
+    BuildContext context,
+    AdoetzAppState app,
+    ChatTarget target,
+  ) {
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    final current = app.activeChatTarget;
+    final text = current.isAgentServer && target.isAgentServer
+        ? 'Device-specific tools, memory, files, and permissions may differ between Agent Servers.'
+        : 'Tools and device state may not be available after switching between a normal model and an Agent Server.';
+    return showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: p.isDark ? const Color(0xff111111) : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Switch Chat Target',
+                style: TextStyle(
+                  color: p.onSurface,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Switch from ${app.formatTargetName(current.displayName)} to ${app.formatTargetName(target.displayName)}. $text',
+                style: TextStyle(
+                  color: p.onSurfaceVariant,
+                  height: 1.45,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 18),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, 'continue'),
+                child: const Text('Continue this chat'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: () => Navigator.pop(context, 'fork'),
+                child: const Text('Fork from here'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, 'cancel'),
+                child: const Text('Cancel'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TargetSectionLabel extends StatelessWidget {
+  const _TargetSectionLabel({required this.label, required this.palette});
+
+  final String label;
+  final AppPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+      child: Text(
+        label.toUpperCase(),
+        style: TextStyle(
+          color: palette.onSurfaceVariant,
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 1.3,
+        ),
+      ),
+    );
+  }
+}
+
+class _TargetTile extends StatelessWidget {
+  const _TargetTile({
+    required this.target,
+    required this.selected,
+    required this.compact,
+    required this.palette,
+    required this.onTap,
+  });
+
+  final ChatTarget target;
+  final bool selected;
+  final bool compact;
+  final AppPalette palette;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.read<AdoetzAppState>();
+    return ListTile(
+      dense: true,
+      minVerticalPadding: compact ? 7 : 10,
+      visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
+      leading: target.isAgentServer
+          ? _ConnectorDot(status: target.status)
+          : Icon(LucideIcons.bot, size: 16, color: palette.primary),
+      title: Text(
+        app.formatTargetName(target.displayName),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: selected
+              ? palette.onSurface
+              : palette.onSurface.withValues(alpha: 0.78),
+          fontWeight: selected ? FontWeight.w900 : FontWeight.w600,
+        ),
+      ),
+      subtitle: Text(
+        target.isAgentServer
+            ? '${target.provider} - ${connectorStatusLabel(target.status)}'
+            : target.provider,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: palette.onSurfaceVariant,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      trailing: selected
+          ? Icon(LucideIcons.check, color: palette.primary, size: 18)
+          : null,
+      onTap: onTap,
+    );
+  }
+}
+
+class _ConnectorDot extends StatelessWidget {
+  const _ConnectorDot({required this.status});
+
+  final ConnectorStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (status) {
+      ConnectorStatus.online => const Color(0xff22c55e),
+      ConnectorStatus.authFailed ||
+      ConnectorStatus.timeout => const Color(0xfff59e0b),
+      ConnectorStatus.offline ||
+      ConnectorStatus.streamingFailed ||
+      ConnectorStatus.syncFailed => const Color(0xffef4444),
+      ConnectorStatus.unknown => const Color(0xff64748b),
+    };
+    return Container(
+      width: 9,
+      height: 9,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(color: color.withValues(alpha: 0.45), blurRadius: 8),
+        ],
+      ),
+    );
   }
 }
 
@@ -614,234 +881,248 @@ class _AppDrawerState extends State<_AppDrawer> {
           right: Radius.circular(p.sidebarRadius),
         ),
       ),
-      backgroundColor:
-          p.isClassic ? (p.isDark ? Colors.black : Colors.white) : Colors.transparent,
+      backgroundColor: p.isClassic
+          ? (p.isDark ? Colors.black : Colors.white)
+          : Colors.transparent,
       elevation: p.isClassic ? 16 : 0,
       child: Builder(
         builder: (context) {
           final inner = SafeArea(
             child: Column(
               children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(22, 14, 12, 10),
-              child: Row(
-                children: [
-                  Text(
-                    'AdoetzGPT',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      color: p.onSurface,
-                      letterSpacing: -0.2,
-                    ),
-                  ),
-                  const Spacer(),
-                  RoundIconButton(
-                    icon: LucideIcons.menu,
-                    onPressed: () => Navigator.pop(context),
-                    color: p.onSurfaceVariant,
-                  ),
-                ],
-              ),
-            ),
-            _NavTile(
-              icon: LucideIcons.edit2,
-              label: copy.t('sidebar', 'newSession'),
-              active: false,
-              onTap: () => _closeAfter(context, app.createSession),
-            ),
-            _NavTile(
-              icon: LucideIcons.search,
-              label: 'Search',
-              active: searchOpen,
-              onTap: () {
-                setState(() {
-                  searchOpen = !searchOpen;
-                  if (!searchOpen) searchController.clear();
-                });
-              },
-            ),
-            AnimatedCrossFade(
-              firstChild: const SizedBox.shrink(),
-              secondChild: _DrawerSearchField(
-                controller: searchController,
-                onChanged: (_) => setState(() {}),
-                onClear: () => setState(searchController.clear),
-              ),
-              crossFadeState: searchOpen
-                  ? CrossFadeState.showSecond
-                  : CrossFadeState.showFirst,
-              duration: const Duration(milliseconds: 180),
-            ),
-            _NavTile(
-              icon: LucideIcons.brain,
-              label: copy.t('sidebar', 'memory'),
-              active: memoryOpen,
-              onTap: () => setState(() => memoryOpen = !memoryOpen),
-            ),
-            AnimatedCrossFade(
-              firstChild: const SizedBox.shrink(),
-              secondChild: _MemoryPanel(copy: copy),
-              crossFadeState: memoryOpen
-                  ? CrossFadeState.showSecond
-                  : CrossFadeState.showFirst,
-              duration: const Duration(milliseconds: 180),
-            ),
-            _NavTile(
-              icon: LucideIcons.trendingUp,
-              label: 'Token Usage',
-              active: app.currentView == AppView.tokenUsage,
-              onTap: () =>
-                  _closeAfter(context, () => app.setView(AppView.tokenUsage)),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
-              child: Divider(color: p.outline),
-            ),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
-                    child: Text(
-                      (searchQuery.isEmpty
-                              ? copy.t('sidebar', 'recentSessions')
-                              : 'Search results')
-                          .toUpperCase(),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: p.onSurfaceVariant.withValues(alpha: 0.7),
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.4,
-                      ),
-                    ),
-                  ),
-                  if (searchQuery.isNotEmpty && visibleSessions.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
-                      child: Text(
-                        'No chats contain "$searchQuery".',
-                        style: TextStyle(
-                          color: p.onSurfaceVariant,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    )
-                  else
-                    ...visibleSessions.map(
-                      (session) =>
-                          _SessionTile(session: session, query: searchQuery),
-                    ),
-                  if (searchQuery.isEmpty && activeSessions.isNotEmpty)
-                    _NavTile(
-                      icon: LucideIcons.trash2,
-                      label: copy.t('sidebar', 'clearAll'),
-                      active: false,
-                      danger: true,
-                      onTap: () => _confirmClear(context, app),
-                    ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(14),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: () =>
-                    _closeAfter(context, () => app.setView(AppView.settings)),
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: p.onSurface.withValues(alpha: 0.05),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: p.outline),
-                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(22, 14, 12, 10),
                   child: Row(
                     children: [
-                      CircleAvatar(
-                        radius: 20,
-                        backgroundColor: p.primary,
-                        backgroundImage: const AssetImage(
-                          'assets/app_logo.png',
+                      Text(
+                        'AdoetzGPT',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          color: p.onSurface,
+                          letterSpacing: -0.2,
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              app.userName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: p.onSurface,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            Text(
-                              copy.t('sidebar', 'verifiedUser').toUpperCase(),
-                              style: const TextStyle(
-                                color: Color(0xff60a5fa),
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 1.8,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(
-                        LucideIcons.settings,
-                        size: 18,
+                      const Spacer(),
+                      RoundIconButton(
+                        icon: LucideIcons.menu,
+                        onPressed: () => Navigator.pop(context),
                         color: p.onSurfaceVariant,
                       ),
                     ],
                   ),
                 ),
-              ),
-            ),
-            ],
-          ),
-        );
-
-        if (p.isClassic || p.glassBlur <= 0) {
-          return Container(
-            color: p.isClassic ? null : p.surface,
-            child: inner,
-          );
-        }
-
-        return BackdropFilter(
-          filter: ui.ImageFilter.blur(
-            sigmaX: p.glassBlur,
-            sigmaY: p.glassBlur,
-          ),
-          child: Container(
-            decoration: BoxDecoration(
-              color: p.surface,
-              border: Border(
-                right: BorderSide(
-                  color: p.outline.withValues(alpha: 0.5),
+                _NavTile(
+                  icon: LucideIcons.edit2,
+                  label: copy.t('sidebar', 'newSession'),
+                  active: false,
+                  onTap: () => _closeAfter(context, app.createSession),
                 ),
-              ),
-              gradient: p.isLiquidGlass ? LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Colors.white.withValues(alpha: p.isDark ? 0.12 : 0.6),
-                  p.surface,
-                  p.surface.withValues(alpha: p.isDark ? 0.02 : 0.2),
-                ],
-              ) : null,
+                _NavTile(
+                  icon: LucideIcons.search,
+                  label: 'Search',
+                  active: searchOpen,
+                  onTap: () {
+                    setState(() {
+                      searchOpen = !searchOpen;
+                      if (!searchOpen) searchController.clear();
+                    });
+                  },
+                ),
+                AnimatedCrossFade(
+                  firstChild: const SizedBox.shrink(),
+                  secondChild: _DrawerSearchField(
+                    controller: searchController,
+                    onChanged: (_) => setState(() {}),
+                    onClear: () => setState(searchController.clear),
+                  ),
+                  crossFadeState: searchOpen
+                      ? CrossFadeState.showSecond
+                      : CrossFadeState.showFirst,
+                  duration: const Duration(milliseconds: 180),
+                ),
+                _NavTile(
+                  icon: LucideIcons.brain,
+                  label: copy.t('sidebar', 'memory'),
+                  active: memoryOpen,
+                  onTap: () => setState(() => memoryOpen = !memoryOpen),
+                ),
+                AnimatedCrossFade(
+                  firstChild: const SizedBox.shrink(),
+                  secondChild: _MemoryPanel(copy: copy),
+                  crossFadeState: memoryOpen
+                      ? CrossFadeState.showSecond
+                      : CrossFadeState.showFirst,
+                  duration: const Duration(milliseconds: 180),
+                ),
+                _NavTile(
+                  icon: LucideIcons.trendingUp,
+                  label: 'Token Usage',
+                  active: app.currentView == AppView.tokenUsage,
+                  onTap: () => _closeAfter(
+                    context,
+                    () => app.setView(AppView.tokenUsage),
+                  ),
+                ),
+                const _AgentServersSection(),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 22,
+                    vertical: 10,
+                  ),
+                  child: Divider(color: p.outline),
+                ),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+                        child: Text(
+                          (searchQuery.isEmpty
+                                  ? copy.t('sidebar', 'recentSessions')
+                                  : 'Search results')
+                              .toUpperCase(),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: p.onSurfaceVariant.withValues(alpha: 0.7),
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1.4,
+                          ),
+                        ),
+                      ),
+                      if (searchQuery.isNotEmpty && visibleSessions.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
+                          child: Text(
+                            'No chats contain "$searchQuery".',
+                            style: TextStyle(
+                              color: p.onSurfaceVariant,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        )
+                      else
+                        ...visibleSessions.map(
+                          (session) => _SessionTile(
+                            session: session,
+                            query: searchQuery,
+                          ),
+                        ),
+                      if (searchQuery.isEmpty && activeSessions.isNotEmpty)
+                        _NavTile(
+                          icon: LucideIcons.trash2,
+                          label: copy.t('sidebar', 'clearAll'),
+                          active: false,
+                          danger: true,
+                          onTap: () => _confirmClear(context, app),
+                        ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () => _closeAfter(
+                      context,
+                      () => app.setView(AppView.settings),
+                    ),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: p.onSurface.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: p.outline),
+                      ),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 20,
+                            backgroundColor: p.primary,
+                            backgroundImage: const AssetImage(
+                              'assets/app_logo.png',
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  app.userName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: p.onSurface,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                Text(
+                                  copy
+                                      .t('sidebar', 'verifiedUser')
+                                      .toUpperCase(),
+                                  style: const TextStyle(
+                                    color: Color(0xff60a5fa),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 1.8,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(
+                            LucideIcons.settings,
+                            size: 18,
+                            color: p.onSurfaceVariant,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-            child: inner,
-          ),
-        );
-      }),
+          );
+
+          if (p.isClassic || p.glassBlur <= 0) {
+            return Container(
+              color: p.isClassic ? null : p.surface,
+              child: inner,
+            );
+          }
+
+          return BackdropFilter(
+            filter: ui.ImageFilter.blur(
+              sigmaX: p.glassBlur,
+              sigmaY: p.glassBlur,
+            ),
+            child: Container(
+              decoration: BoxDecoration(
+                color: p.surface,
+                border: Border(
+                  right: BorderSide(color: p.outline.withValues(alpha: 0.5)),
+                ),
+                gradient: p.isLiquidGlass
+                    ? LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Colors.white.withValues(alpha: p.isDark ? 0.12 : 0.6),
+                          p.surface,
+                          p.surface.withValues(alpha: p.isDark ? 0.02 : 0.2),
+                        ],
+                      )
+                    : null,
+              ),
+              child: inner,
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -880,6 +1161,185 @@ class _AppDrawerState extends State<_AppDrawer> {
       app.clearAllSessions();
       Navigator.pop(context);
     }
+  }
+}
+
+class _AgentServersSection extends StatefulWidget {
+  const _AgentServersSection();
+
+  @override
+  State<_AgentServersSection> createState() => _AgentServersSectionState();
+}
+
+class _AgentServersSectionState extends State<_AgentServersSection> {
+  bool open = true;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    return Column(
+      children: [
+        _NavTile(
+          icon: LucideIcons.server,
+          label: 'Agent Servers',
+          active: open,
+          onTap: () => setState(() => open = !open),
+        ),
+        AnimatedCrossFade(
+          firstChild: const SizedBox.shrink(),
+          secondChild: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 8, 8),
+            child: app.agentConnectors.isEmpty
+                ? Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        app.setView(AppView.settings);
+                      },
+                      icon: const Icon(LucideIcons.plus, size: 14),
+                      label: const Text('Add connector'),
+                    ),
+                  )
+                : Column(
+                    children: app.agentConnectors.map((connector) {
+                      final active =
+                          app.activeChatTarget.connectorId == connector.id;
+                      return ListTile(
+                        dense: true,
+                        minLeadingWidth: 18,
+                        contentPadding: const EdgeInsets.only(left: 6),
+                        leading: _ConnectorDot(status: connector.status),
+                        title: Text(
+                          connector.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: active ? p.onSurface : p.onSurfaceVariant,
+                            fontWeight: active
+                                ? FontWeight.w900
+                                : FontWeight.w700,
+                          ),
+                        ),
+                        subtitle: Text(
+                          connector.providerLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: p.onSurfaceVariant.withValues(alpha: 0.7),
+                            fontSize: 10,
+                          ),
+                        ),
+                        trailing: PopupMenuButton<String>(
+                          icon: Icon(
+                            LucideIcons.moreHorizontal,
+                            size: 16,
+                            color: p.onSurfaceVariant,
+                          ),
+                          onSelected: (value) => _handleConnectorMenu(
+                            context,
+                            app,
+                            connector,
+                            value,
+                          ),
+                          itemBuilder: (context) => [
+                            const PopupMenuItem(
+                              value: 'test',
+                              child: Text('Test Connection'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'default',
+                              child: Text('Set as Default'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'logs',
+                              child: Text('View Logs'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'edit',
+                              child: Text('Edit'),
+                            ),
+                            PopupMenuItem(
+                              value: 'toggle',
+                              child: Text(
+                                connector.enabled ? 'Disable' : 'Enable',
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Text('Delete'),
+                            ),
+                          ],
+                        ),
+                        onTap: () {
+                          app.startChatWithConnector(connector.id);
+                          Navigator.pop(context);
+                        },
+                      );
+                    }).toList(),
+                  ),
+          ),
+          crossFadeState: open
+              ? CrossFadeState.showSecond
+              : CrossFadeState.showFirst,
+          duration: const Duration(milliseconds: 180),
+        ),
+      ],
+    );
+  }
+
+  void _handleConnectorMenu(
+    BuildContext context,
+    AdoetzAppState app,
+    AgentConnector connector,
+    String value,
+  ) {
+    switch (value) {
+      case 'test':
+        unawaited(app.testAgentConnector(connector.id));
+        break;
+      case 'default':
+        app.setDefaultConnector(connector.id);
+        break;
+      case 'logs':
+        _showConnectorLogs(context, connector);
+        break;
+      case 'edit':
+        Navigator.pop(context);
+        app.setView(AppView.settings);
+        break;
+      case 'toggle':
+        app.setConnectorEnabled(connector.id, !connector.enabled);
+        break;
+      case 'delete':
+        app.deleteAgentConnector(connector.id);
+        break;
+    }
+  }
+
+  void _showConnectorLogs(BuildContext context, AgentConnector connector) {
+    final logs = connector.logs.isEmpty
+        ? ['No connector logs yet.']
+        : connector.logs;
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('${connector.name} Logs'),
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(child: SelectableText(logs.join('\n'))),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -1144,6 +1604,7 @@ class _SessionTile extends StatelessWidget {
     final active =
         app.currentView == AppView.chat && app.currentSessionId == session.id;
     final preview = _matchPreview(session, query);
+    final targetLabel = app.targetLabelForSession(session);
     return ListTile(
       dense: true,
       minLeadingWidth: 22,
@@ -1153,14 +1614,32 @@ class _SessionTile extends StatelessWidget {
         size: 16,
         color: active ? p.onSurface : p.onSurfaceVariant.withValues(alpha: 0.7),
       ),
-      title: Text(
-        session.title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: active ? p.onSurface : p.onSurfaceVariant,
-          fontSize: 15,
-        ),
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            session.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: active ? p.onSurface : p.onSurfaceVariant,
+              fontSize: 15,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            targetLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: active
+                  ? p.primary.withValues(alpha: 0.9)
+                  : p.onSurfaceVariant.withValues(alpha: 0.62),
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
       ),
       subtitle: preview == null
           ? null
@@ -1281,9 +1760,10 @@ class _SyncStatusIconState extends State<_SyncStatusIcon>
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
-    _opacity = Tween<double>(begin: 0.3, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
+    _opacity = Tween<double>(
+      begin: 0.3,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
     _updateAnimation();
   }
 
@@ -1297,7 +1777,8 @@ class _SyncStatusIconState extends State<_SyncStatusIcon>
 
   void _updateAnimation() {
     final lower = widget.status.toLowerCase();
-    final isSyncing = lower.contains('syncing') ||
+    final isSyncing =
+        lower.contains('syncing') ||
         lower.contains('connecting') ||
         lower.contains('pulling');
     if (isSyncing) {
@@ -1318,15 +1799,20 @@ class _SyncStatusIconState extends State<_SyncStatusIcon>
   Widget build(BuildContext context) {
     final lower = widget.status.toLowerCase();
     Color iconColor = widget.color;
-    final isSyncing = lower.contains('syncing') ||
+    final isSyncing =
+        lower.contains('syncing') ||
         lower.contains('connecting') ||
         lower.contains('pulling');
-        
+
     if (isSyncing) {
       iconColor = Colors.blue;
-    } else if (lower.contains('success') || lower.contains('loaded') || lower.contains('saved')) {
+    } else if (lower.contains('success') ||
+        lower.contains('loaded') ||
+        lower.contains('saved')) {
       iconColor = Colors.green;
-    } else if (lower.contains('fail') || lower.contains('error') || lower.contains('disconnect')) {
+    } else if (lower.contains('fail') ||
+        lower.contains('error') ||
+        lower.contains('disconnect')) {
       iconColor = Colors.red;
     }
 
@@ -1343,11 +1829,7 @@ class _SyncStatusIconState extends State<_SyncStatusIcon>
               child: child,
             );
           },
-          child: Icon(
-            LucideIcons.database,
-            size: 16,
-            color: iconColor,
-          ),
+          child: Icon(LucideIcons.database, size: 16, color: iconColor),
         ),
       ),
     );

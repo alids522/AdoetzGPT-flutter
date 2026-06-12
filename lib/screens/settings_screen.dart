@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
@@ -87,6 +89,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _ApiSection(copy: copy),
               const SizedBox(height: 22),
               _EndpointSection(copy: copy),
+              const SizedBox(height: 22),
+              const _ConnectorSection(),
               const SizedBox(height: 22),
               _VoiceSection(copy: copy),
               const SizedBox(height: 22),
@@ -1034,6 +1038,359 @@ class _EndpointSection extends StatelessWidget {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ConnectorSection extends StatelessWidget {
+  const _ConnectorSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SectionHeader(
+            icon: LucideIcons.serverCog,
+            title: 'Agent Servers',
+            accent: Color(0xff22c55e),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Configure OpenClaw, Hermes, and OpenAI-compatible agent connectors. Use a backend proxy with encrypted secret storage for production credentials.',
+            style: TextStyle(
+              color: p.onSurfaceVariant,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (app.agentConnectors.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: p.surfaceDim,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: p.outline),
+              ),
+              child: Text(
+                'No Agent Servers configured yet.',
+                style: TextStyle(color: p.onSurfaceVariant),
+              ),
+            )
+          else
+            ...app.agentConnectors.map(
+              (connector) => Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: _ConnectorEditor(connector: connector),
+              ),
+            ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () =>
+                    app.upsertAgentConnector(AgentConnector.empty()),
+                icon: const Icon(LucideIcons.plus, size: 16),
+                label: const Text('Add Connector'),
+              ),
+              OutlinedButton.icon(
+                onPressed: app.agentConnectors.isEmpty
+                    ? null
+                    : () {
+                        for (final connector in app.agentConnectors) {
+                          unawaited(app.testAgentConnector(connector.id));
+                        }
+                      },
+                icon: const Icon(LucideIcons.activity, size: 16),
+                label: const Text('Test All'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConnectorEditor extends StatelessWidget {
+  const _ConnectorEditor({required this.connector});
+
+  final AgentConnector connector;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+
+    void update(AgentConnector next) => app.upsertAgentConnector(next);
+
+    return GlassPanel(
+      radius: 20,
+      padding: const EdgeInsets.all(16),
+      backgroundColor: p.surfaceDim,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              _ConnectorStatusDot(status: connector.status),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  connector.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: p.onSurface,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              if (connector.isDefault)
+                Chip(
+                  label: const Text('Default'),
+                  visualDensity: VisualDensity.compact,
+                  side: BorderSide(color: p.primary.withValues(alpha: 0.5)),
+                ),
+              IconButton(
+                tooltip: 'Delete',
+                icon: const Icon(LucideIcons.trash2, size: 18),
+                onPressed: () => app.deleteAgentConnector(connector.id),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _SettingField(
+            label: 'Name',
+            initialValue: connector.name,
+            onChanged: (value) => update(connector.copyWith(name: value)),
+          ),
+          const SizedBox(height: 10),
+          _DropdownSetting(
+            label: 'Connector Type',
+            value: connectorTypeCode(connector.type),
+            values: const [
+              'openclaw_gateway',
+              'hermes_agent',
+              'generic_openai_compatible',
+            ],
+            labels: const {
+              'openclaw_gateway': 'OpenClaw Gateway',
+              'hermes_agent': 'Hermes Agent',
+              'generic_openai_compatible': 'Generic OpenAI Compatible',
+            },
+            onChanged: (value) =>
+                update(connector.copyWith(type: connectorTypeFromJson(value))),
+          ),
+          const SizedBox(height: 10),
+          _SettingField(
+            label: 'Backend Proxy / Base URL',
+            initialValue: connector.baseUrl,
+            hint: 'https://your-backend.example.com/openclaw/home',
+            onChanged: (value) => update(connector.copyWith(baseUrl: value)),
+          ),
+          const SizedBox(height: 10),
+          _SettingField(
+            label: 'Encrypted API Key / Secret Ref',
+            initialValue: connector.encryptedApiKey,
+            obscure: true,
+            hint: 'Prefer a backend-held secret reference',
+            onChanged: (value) =>
+                update(connector.copyWith(encryptedApiKey: value)),
+          ),
+          const SizedBox(height: 10),
+          _DropdownSetting(
+            label: 'Permission Mode',
+            value: toolPermissionModeCode(connector.permissionMode),
+            values: const [
+              'tools_disabled',
+              'safe_auto',
+              'ask_before_write',
+              'ask_before_every_tool',
+            ],
+            labels: const {
+              'tools_disabled': 'Tools disabled',
+              'safe_auto': 'Safe auto',
+              'ask_before_write': 'Ask before write',
+              'ask_before_every_tool': 'Ask before every tool',
+            },
+            onChanged: (value) => update(
+              connector.copyWith(
+                permissionMode: toolPermissionModeFromJson(value),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilterChip(
+                selected: connector.enabled,
+                label: Text(connector.enabled ? 'Enabled' : 'Disabled'),
+                onSelected: (value) =>
+                    app.setConnectorEnabled(connector.id, value),
+              ),
+              FilterChip(
+                selected: connector.isDefault,
+                label: const Text('Default'),
+                onSelected: (_) => app.setDefaultConnector(connector.id),
+              ),
+              FilterChip(
+                selected: connector.capabilities.supportsStreaming,
+                label: const Text('Streaming'),
+                onSelected: (value) => update(
+                  connector.copyWith(
+                    capabilities: connector.capabilities.copyWith(
+                      supportsStreaming: value,
+                    ),
+                  ),
+                ),
+              ),
+              FilterChip(
+                selected: connector.capabilities.supportsTools,
+                label: const Text('Tools'),
+                onSelected: (value) => update(
+                  connector.copyWith(
+                    capabilities: connector.capabilities.copyWith(
+                      supportsTools: value,
+                    ),
+                  ),
+                ),
+              ),
+              FilterChip(
+                selected: connector.capabilities.supportsModelsEndpoint,
+                label: const Text('Models Endpoint'),
+                onSelected: (value) => update(
+                  connector.copyWith(
+                    capabilities: connector.capabilities.copyWith(
+                      supportsModelsEndpoint: value,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () =>
+                    unawaited(app.testAgentConnector(connector.id)),
+                icon: const Icon(LucideIcons.refreshCw, size: 16),
+                label: const Text('Test Connection'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () =>
+                    unawaited(app.syncAgentConnectorTargets(connector.id)),
+                icon: const Icon(LucideIcons.cloudDownload, size: 16),
+                label: const Text('Sync Targets'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _showLogs(context, connector),
+                icon: const Icon(LucideIcons.fileText, size: 16),
+                label: const Text('View Logs'),
+              ),
+              if (connector.latencyMs != null)
+                Chip(label: Text('${connector.latencyMs}ms')),
+              Chip(label: Text(connectorStatusLabel(connector.status))),
+            ],
+          ),
+          if (connector.lastError.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              connector.lastError,
+              style: TextStyle(
+                color: connector.lastError.toLowerCase().contains('testing')
+                    ? p.onSurfaceVariant
+                    : p.error,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          if (connector.targets.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text('TARGETS', style: _labelStyle(context)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: connector.targets
+                  .take(12)
+                  .map((target) => Chip(label: Text(target.displayName)))
+                  .toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _showLogs(BuildContext context, AgentConnector connector) {
+    final logs = connector.logs.isEmpty
+        ? ['No connector logs yet.']
+        : connector.logs;
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('${connector.name} Logs'),
+        content: SizedBox(
+          width: 480,
+          child: SingleChildScrollView(child: SelectableText(logs.join('\n'))),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConnectorStatusDot extends StatelessWidget {
+  const _ConnectorStatusDot({required this.status});
+
+  final ConnectorStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (status) {
+      ConnectorStatus.online => const Color(0xff22c55e),
+      ConnectorStatus.authFailed ||
+      ConnectorStatus.timeout => const Color(0xfff59e0b),
+      ConnectorStatus.offline ||
+      ConnectorStatus.streamingFailed ||
+      ConnectorStatus.syncFailed => const Color(0xffef4444),
+      ConnectorStatus.unknown => const Color(0xff64748b),
+    };
+    return Container(
+      width: 11,
+      height: 11,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(color: color.withValues(alpha: 0.45), blurRadius: 10),
         ],
       ),
     );

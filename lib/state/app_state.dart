@@ -62,6 +62,7 @@ class AdoetzAppState extends ChangeNotifier {
   String theme = 'dark';
   String visualTheme = 'default';
   String selectedModel = 'gemini-2.5-flash';
+  String selectedTargetId = 'model:gemini-2.5-flash';
   bool isThinkingMode = false;
   bool isArtifactMode = false;
   bool soundEffectsEnabled = true;
@@ -79,9 +80,10 @@ class AdoetzAppState extends ChangeNotifier {
       key: '',
     ),
   ];
+  List<AgentConnector> agentConnectors = const [];
   GenerationSettings genSettings = const GenerationSettings();
   VoiceSettings voiceSettings = const VoiceSettings();
-  List<Session> sessions = [Session.empty('1')];
+  List<Session> sessions = [Session.empty('1', 'model:gemini-2.5-flash')];
   String currentSessionId = '1';
   List<Memory> memories = const [];
   List<TokenUsageRecord> tokenUsageData = const [];
@@ -113,10 +115,61 @@ class AdoetzAppState extends ChangeNotifier {
             .firstOrNull ??
         (activeSessions.isNotEmpty
             ? activeSessions.first
-            : Session.empty('default'));
+            : Session.empty('default', selectedTargetId));
   }
 
   bool get isDark => theme == 'dark';
+
+  List<ChatTarget> get modelTargets {
+    final targetModels = models.isEmpty ? [selectedModel] : models;
+    return targetModels
+        .where((model) => model.trim().isNotEmpty)
+        .map(
+          (model) =>
+              ChatTarget.model(model, provider: _modelProviderLabel(model)),
+        )
+        .toList();
+  }
+
+  List<ChatTarget> get agentServerTargets {
+    return agentConnectors
+        .where((connector) => connector.enabled)
+        .map((connector) => ChatTarget.agent(connector: connector))
+        .toList();
+  }
+
+  List<ChatTarget> get chatTargets => [...modelTargets, ...agentServerTargets];
+
+  ChatTarget get activeChatTarget {
+    final currentTarget = currentSession.currentTargetId.trim();
+    final candidates = chatTargets;
+    for (final id in [selectedTargetId, currentTarget]) {
+      if (id.isEmpty) continue;
+      final match = candidates.where((target) => target.id == id).firstOrNull;
+      if (match != null) return match;
+    }
+    return ChatTarget.model(
+      selectedModel,
+      provider: _modelProviderLabel(selectedModel),
+    );
+  }
+
+  String targetLabelForSession(Session session) {
+    final id = session.lastTargetId.isNotEmpty
+        ? session.lastTargetId
+        : session.currentTargetId;
+    final target = chatTargets.where((item) => item.id == id).firstOrNull;
+    if (target != null) return formatTargetName(target.displayName);
+    if (id.startsWith('model:')) return formatTargetName(id.substring(6));
+    if (id.startsWith('agent:')) {
+      final connectorId = id.substring(6);
+      final connector = agentConnectors
+          .where((item) => item.id == connectorId)
+          .firstOrNull;
+      return connector?.name ?? 'Agent Server';
+    }
+    return formatTargetName(selectedModel);
+  }
 
   Future<void> initialize() async {
     final saved = await _storage.load();
@@ -128,7 +181,7 @@ class AdoetzAppState extends ChangeNotifier {
     }
 
     if (activeSessions.isEmpty) {
-      final session = Session.empty();
+      final session = Session.empty(null, selectedTargetId);
       sessions = [...sessions, session];
       currentSessionId = session.id;
     } else if (!activeSessions.any(
@@ -193,6 +246,7 @@ class AdoetzAppState extends ChangeNotifier {
       theme: theme,
       visualTheme: visualTheme,
       selectedModel: selectedModel,
+      selectedTargetId: selectedTargetId,
       isThinkingMode: isThinkingMode,
       isArtifactMode: isArtifactMode,
       soundEffectsEnabled: soundEffectsEnabled,
@@ -201,6 +255,7 @@ class AdoetzAppState extends ChangeNotifier {
       userName: userName,
       geminiApiKey: geminiApiKey,
       endpoints: endpoints,
+      agentConnectors: agentConnectors,
       genSettings: genSettings,
       voiceSettings: voiceSettings,
       sessions: persistedSessions,
@@ -220,6 +275,9 @@ class AdoetzAppState extends ChangeNotifier {
     theme = state.theme;
     visualTheme = state.visualTheme;
     selectedModel = state.selectedModel;
+    selectedTargetId = state.selectedTargetId.isEmpty
+        ? 'model:$selectedModel'
+        : state.selectedTargetId;
     isThinkingMode = state.isThinkingMode;
     isArtifactMode = state.isArtifactMode;
     soundEffectsEnabled = state.soundEffectsEnabled;
@@ -228,9 +286,12 @@ class AdoetzAppState extends ChangeNotifier {
     userName = state.userName;
     geminiApiKey = state.geminiApiKey;
     endpoints = state.endpoints.isEmpty ? endpoints : state.endpoints;
+    agentConnectors = state.agentConnectors;
     genSettings = state.genSettings;
     voiceSettings = state.voiceSettings;
-    sessions = state.sessions.isEmpty ? [Session.empty('1')] : state.sessions;
+    sessions = state.sessions.isEmpty
+        ? [Session.empty('1', selectedTargetId)]
+        : state.sessions;
     currentSessionId = state.currentSessionId;
     memories = state.memories;
     tokenUsageData = state.tokenUsageData;
@@ -290,6 +351,9 @@ class AdoetzAppState extends ChangeNotifier {
       selectedModel: remoteIsNewer && remote.selectedModel.isNotEmpty
           ? remote.selectedModel
           : local.selectedModel,
+      selectedTargetId: remoteIsNewer && remote.selectedTargetId.isNotEmpty
+          ? remote.selectedTargetId
+          : local.selectedTargetId,
       isThinkingMode: remoteIsNewer
           ? remote.isThinkingMode
           : local.isThinkingMode,
@@ -305,6 +369,9 @@ class AdoetzAppState extends ChangeNotifier {
       endpoints: remoteIsNewer && remote.endpoints.isNotEmpty
           ? remote.endpoints
           : local.endpoints,
+      agentConnectors: remoteIsNewer
+          ? remote.agentConnectors
+          : local.agentConnectors,
       genSettings: remoteIsNewer ? remote.genSettings : local.genSettings,
       voiceSettings: remoteIsNewer ? remote.voiceSettings : local.voiceSettings,
       sessions: mergedSessions,
@@ -405,7 +472,7 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void _resetForAccount(UserAccount user, String token, SyncSettings nextSync) {
-    final session = Session.empty('1');
+    final session = Session.empty('1', 'model:gemini-2.5-flash');
     currentUser = user;
     authToken = token;
     userName = user.label;
@@ -427,6 +494,8 @@ class AdoetzAppState extends ChangeNotifier {
     tokenUsageData = const [];
     customCounters = const [];
     selectedModel = 'gemini-2.5-flash';
+    selectedTargetId = 'model:gemini-2.5-flash';
+    agentConnectors = const [];
     isThinkingMode = false;
     isArtifactMode = false;
     lastSyncAt = null;
@@ -518,9 +587,363 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void setSelectedModel(String model) {
-    selectedModel = model;
+    final trimmed = model.trim().isEmpty ? 'gemini-2.5-flash' : model.trim();
+    applyChatTarget(
+      ChatTarget.model(trimmed, provider: _modelProviderLabel(trimmed)),
+      insertDivider: false,
+    );
+  }
+
+  bool requiresTargetSwitchConfirmation(ChatTarget target) {
+    final current = activeChatTarget;
+    if (current.id == target.id) return false;
+    return current.type != ChatTargetType.model ||
+        target.type != ChatTargetType.model;
+  }
+
+  void applyChatTarget(
+    ChatTarget target, {
+    bool fork = false,
+    bool insertDivider = true,
+  }) {
+    final previous = activeChatTarget;
+    if (previous.id == target.id) return;
+
+    if (target.isModel) {
+      selectedModel = target.modelId ?? target.displayName;
+    }
+    selectedTargetId = target.id;
+    currentView = AppView.chat;
+
+    final now = DateTime.now();
+    final session = currentSession;
+    final shouldInsertDivider =
+        insertDivider &&
+        session.messages.isNotEmpty &&
+        (previous.type != ChatTargetType.model ||
+            target.type != ChatTargetType.model);
+    final handoff = _buildHandoffSummary(session, previous, target);
+    final targetHistory = _appendTargetHistory(
+      session.targetHistory,
+      target.id,
+    );
+    final startedTarget = session.startedWithTargetId.isEmpty
+        ? previous.id
+        : session.startedWithTargetId;
+
+    if (fork) {
+      final forked = Session.empty(null, target.id).copyWith(
+        title: '${session.title} (Branch)',
+        messages: session.messages,
+        createdAt: now.millisecondsSinceEpoch,
+        updatedAt: now.millisecondsSinceEpoch,
+        currentTargetId: target.id,
+        startedWithTargetId: target.id,
+        lastTargetId: target.id,
+        targetHistory: targetHistory,
+        handoffSummary: handoff,
+      );
+      sessions = [forked, ...sessions];
+      currentSessionId = forked.id;
+      notifyListeners();
+      unawaited(_persistAndScheduleRemote());
+      return;
+    }
+
+    final switchEvent = TargetSwitchEvent(
+      id: 'switch-${now.microsecondsSinceEpoch}',
+      chatId: session.id,
+      fromTargetId: previous.id,
+      toTargetId: target.id,
+      handoffSummary: handoff,
+      createdAt: now.millisecondsSinceEpoch,
+    );
+    final messages = [
+      ...session.messages,
+      if (shouldInsertDivider)
+        Message(
+          id: 'switch-${now.microsecondsSinceEpoch}',
+          text:
+              'Switched from ${formatTargetName(previous.displayName)} to ${formatTargetName(target.displayName)}',
+          sender: 'system',
+          timestamp: DateFormat('hh:mm a').format(now),
+          targetId: target.id,
+          targetType: target.type,
+          targetName: target.displayName,
+          connectorId: target.connectorId,
+          modelOrAgentId: target.modelId,
+        ),
+    ];
+
+    _replaceSession(
+      session.id,
+      session.copyWith(
+        messages: messages,
+        currentTargetId: target.id,
+        startedWithTargetId: startedTarget,
+        lastTargetId: target.id,
+        targetHistory: targetHistory,
+        handoffSummary: handoff,
+        targetSwitchEvents: [...session.targetSwitchEvents, switchEvent],
+        updatedAt: now.millisecondsSinceEpoch,
+      ),
+    );
     notifyListeners();
-    unawaited(_persist());
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void createSessionForTarget(ChatTarget target) {
+    if (target.isModel) {
+      selectedModel = target.modelId ?? target.displayName;
+    }
+    selectedTargetId = target.id;
+    final session = Session.empty(null, target.id);
+    sessions = [session, ...sessions];
+    currentSessionId = session.id;
+    currentView = AppView.chat;
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void startChatWithConnector(String connectorId) {
+    final connector = agentConnectors
+        .where((item) => item.id == connectorId)
+        .firstOrNull;
+    if (connector == null) return;
+    createSessionForTarget(ChatTarget.agent(connector: connector));
+  }
+
+  void upsertAgentConnector(AgentConnector connector) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final next = connector.copyWith(updatedAt: now);
+    final exists = agentConnectors.any((item) => item.id == connector.id);
+    agentConnectors = exists
+        ? agentConnectors
+              .map((item) => item.id == connector.id ? next : item)
+              .toList()
+        : [next, ...agentConnectors];
+    if (next.isDefault) {
+      agentConnectors = agentConnectors
+          .map(
+            (item) =>
+                item.id == next.id ? item : item.copyWith(isDefault: false),
+          )
+          .toList();
+    }
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void deleteAgentConnector(String id) {
+    agentConnectors = agentConnectors.where((item) => item.id != id).toList();
+    if (selectedTargetId == 'agent:$id') {
+      selectedTargetId = 'model:$selectedModel';
+    }
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void setConnectorEnabled(String id, bool enabled) {
+    agentConnectors = agentConnectors
+        .map(
+          (item) => item.id == id
+              ? item.copyWith(
+                  enabled: enabled,
+                  updatedAt: DateTime.now().millisecondsSinceEpoch,
+                )
+              : item,
+        )
+        .toList();
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void setDefaultConnector(String id) {
+    agentConnectors = agentConnectors
+        .map((item) => item.copyWith(isDefault: item.id == id))
+        .toList();
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  Future<void> testAgentConnector(String id) async {
+    final connector = agentConnectors
+        .where((item) => item.id == id)
+        .firstOrNull;
+    if (connector == null) return;
+    final started = DateTime.now();
+    _updateConnector(
+      id,
+      connector.copyWith(
+        status: ConnectorStatus.unknown,
+        lastError: 'Testing connection...',
+        updatedAt: started.millisecondsSinceEpoch,
+      ),
+    );
+    try {
+      await _ai
+          .fetchAvailableModelsForEndpoint(
+            endpoint: _endpointForConnector(connector),
+            syncSettings: syncSettings,
+          )
+          .timeout(const Duration(seconds: 12));
+      final latency = DateTime.now().difference(started).inMilliseconds;
+      _updateConnector(
+        id,
+        connector.copyWith(
+          status: ConnectorStatus.online,
+          latencyMs: latency,
+          lastCheckedAt: DateTime.now().millisecondsSinceEpoch,
+          lastError: '',
+          logs: _appendConnectorLog(
+            connector.logs,
+            'Connection OK (${latency}ms)',
+          ),
+        ),
+      );
+    } catch (error) {
+      final status = _connectorStatusForError(error);
+      _updateConnector(
+        id,
+        connector.copyWith(
+          status: status,
+          latencyMs: null,
+          lastCheckedAt: DateTime.now().millisecondsSinceEpoch,
+          lastError: error.toString().replaceFirst('Exception: ', ''),
+          logs: _appendConnectorLog(
+            connector.logs,
+            'Connection failed: ${error.toString().replaceFirst('Exception: ', '')}',
+          ),
+          clearLatency: true,
+        ),
+      );
+    }
+  }
+
+  Future<void> syncAgentConnectorTargets(String id) async {
+    final connector = agentConnectors
+        .where((item) => item.id == id)
+        .firstOrNull;
+    if (connector == null) return;
+    try {
+      final names = await _ai
+          .fetchAvailableModelsForEndpoint(
+            endpoint: _endpointForConnector(connector),
+            syncSettings: syncSettings,
+          )
+          .timeout(const Duration(seconds: 16));
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final targets = names
+          .where((name) => name.trim().isNotEmpty)
+          .map(
+            (name) => ConnectorTarget(
+              id: '${connector.id}:$name',
+              connectorId: connector.id,
+              modelId: name,
+              displayName: name,
+              createdAt: now,
+              updatedAt: now,
+            ),
+          )
+          .toList();
+      _updateConnector(
+        id,
+        connector.copyWith(
+          targets: targets,
+          status: ConnectorStatus.online,
+          lastCheckedAt: now,
+          lastError: '',
+          logs: _appendConnectorLog(
+            connector.logs,
+            'Synced ${targets.length} target(s).',
+          ),
+        ),
+      );
+    } catch (error) {
+      _updateConnector(
+        id,
+        connector.copyWith(
+          status: ConnectorStatus.syncFailed,
+          lastCheckedAt: DateTime.now().millisecondsSinceEpoch,
+          lastError: error.toString().replaceFirst('Exception: ', ''),
+          logs: _appendConnectorLog(
+            connector.logs,
+            'Target sync failed: ${error.toString().replaceFirst('Exception: ', '')}',
+          ),
+        ),
+      );
+    }
+  }
+
+  List<String> _appendTargetHistory(List<String> history, String targetId) {
+    if (targetId.isEmpty) return history;
+    final next = [...history.where((item) => item.isNotEmpty)];
+    if (next.isEmpty || next.last != targetId) next.add(targetId);
+    return next.length > 24 ? next.sublist(next.length - 24) : next;
+  }
+
+  List<String> _appendConnectorLog(List<String> logs, String entry) {
+    final time = DateFormat('HH:mm:ss').format(DateTime.now());
+    final next = ['$time $entry', ...logs];
+    return next.take(40).toList();
+  }
+
+  void _updateConnector(String id, AgentConnector next) {
+    agentConnectors = agentConnectors
+        .map((item) => item.id == id ? next : item)
+        .toList();
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  EndpointConfig _endpointForConnector(AgentConnector connector) {
+    return EndpointConfig(
+      id: 'connector-${connector.id}',
+      url: connector.baseUrl,
+      key: connector.encryptedApiKey,
+      name: connector.name,
+      skipModelFetch: !connector.capabilities.supportsModelsEndpoint,
+      models: connector.targets.map((target) => target.modelId).toList(),
+    );
+  }
+
+  ConnectorStatus _connectorStatusForError(Object error) {
+    final text = error.toString().toLowerCase();
+    if (text.contains('key') ||
+        text.contains('auth') ||
+        text.contains('401') ||
+        text.contains('403')) {
+      return ConnectorStatus.authFailed;
+    }
+    if (text.contains('timeout')) return ConnectorStatus.timeout;
+    return ConnectorStatus.offline;
+  }
+
+  String _buildHandoffSummary(
+    Session session,
+    ChatTarget previous,
+    ChatTarget target,
+  ) {
+    if (session.messages.isEmpty) return '';
+    final recent = session.messages
+        .where((message) => !message.isSystem && message.text.trim().isNotEmpty)
+        .toList()
+        .reversed
+        .take(6)
+        .toList()
+        .reversed;
+    final summary = recent
+        .map((message) {
+          final role = message.isUser ? 'User' : 'Assistant';
+          final text = message.text.replaceAll(RegExp(r'\s+'), ' ').trim();
+          return '$role: ${text.length > 220 ? '${text.substring(0, 220)}...' : text}';
+        })
+        .join('\n');
+    return [
+      'Previous target: ${previous.displayName}',
+      'Next target: ${target.displayName}',
+      if (summary.isNotEmpty) 'Recent conversation:\n$summary',
+    ].join('\n');
   }
 
   void createSession() {
@@ -529,7 +952,7 @@ class AdoetzAppState extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    final session = Session.empty();
+    final session = Session.empty(null, activeChatTarget.id);
     sessions = [session, ...sessions];
     currentSessionId = session.id;
     currentView = AppView.chat;
@@ -543,6 +966,16 @@ class AdoetzAppState extends ChangeNotifier {
 
   void selectSession(String id) {
     currentSessionId = id;
+    final session = sessions.where((item) => item.id == id).firstOrNull;
+    final targetId = session?.lastTargetId.isNotEmpty == true
+        ? session!.lastTargetId
+        : session?.currentTargetId;
+    if (targetId != null && targetId.isNotEmpty) {
+      selectedTargetId = targetId;
+      if (targetId.startsWith('model:')) {
+        selectedModel = targetId.substring(6);
+      }
+    }
     currentView = AppView.chat;
     notifyListeners();
     unawaited(_persist());
@@ -558,7 +991,7 @@ class AdoetzAppState extends ChangeNotifier {
         )
         .toList();
     if (activeSessions.isEmpty) {
-      final session = Session.empty();
+      final session = Session.empty(null, activeChatTarget.id);
       sessions = [...sessions, session];
       currentSessionId = session.id;
     } else if (id == currentSessionId) {
@@ -601,7 +1034,7 @@ class AdoetzAppState extends ChangeNotifier {
 
   void clearAllSessions() {
     final now = DateTime.now().millisecondsSinceEpoch;
-    final session = Session.empty();
+    final session = Session.empty(null, activeChatTarget.id);
     sessions = [
       ...sessions.map((item) => item.copyWith(deleted: true, updatedAt: now)),
       session,
@@ -676,6 +1109,13 @@ class AdoetzAppState extends ChangeNotifier {
     });
 
     final session = currentSession;
+    final target = activeChatTarget;
+    final request = _requestConfigForTarget(target);
+    final requestPrompt = _promptWithTargetContext(
+      prompt.trim(),
+      session,
+      target,
+    );
     final now = DateTime.now();
     final userMessage = Message(
       id: now.millisecondsSinceEpoch.toString(),
@@ -685,9 +1125,9 @@ class AdoetzAppState extends ChangeNotifier {
       attachments: attachments,
       tokenCount: countTokens(prompt),
     );
-    final history = session.messages;
+    final history = _historyForRequest(session);
     final botId = (now.millisecondsSinceEpoch + 1).toString();
-    final modelForRequest = selectedModel;
+    final modelForRequest = request.model;
     final generationId = '${now.microsecondsSinceEpoch}-$botId';
     final botMessage = Message(
       id: botId,
@@ -695,6 +1135,11 @@ class AdoetzAppState extends ChangeNotifier {
       sender: 'bot',
       timestamp: DateFormat('hh:mm a').format(now),
       model: modelForRequest,
+      targetId: target.id,
+      targetType: target.type,
+      targetName: target.displayName,
+      connectorId: target.connectorId,
+      modelOrAgentId: target.modelId,
     );
     final isFirstMessage = history.isEmpty;
     final fallbackTitle = cleanTitle(
@@ -704,7 +1149,13 @@ class AdoetzAppState extends ChangeNotifier {
       title: isFirstMessage && fallbackTitle.isNotEmpty
           ? fallbackTitle
           : session.title,
-      messages: [...history, userMessage, botMessage],
+      messages: [...session.messages, userMessage, botMessage],
+      currentTargetId: target.id,
+      startedWithTargetId: session.startedWithTargetId.isEmpty
+          ? target.id
+          : session.startedWithTargetId,
+      lastTargetId: target.id,
+      targetHistory: _appendTargetHistory(session.targetHistory, target.id),
       updatedAt: now.millisecondsSinceEpoch,
     );
     _replaceSession(session.id, nextSession);
@@ -720,19 +1171,22 @@ class AdoetzAppState extends ChangeNotifier {
         _generateSessionTitle(
           sessionId: session.id,
           message: prompt.trim(),
-          model: modelForRequest,
+          model: target.isModel ? modelForRequest : selectedModel,
         ),
       );
     }
 
     try {
+      if (request.configurationError != null) {
+        throw Exception(request.configurationError);
+      }
       final response = await _ai.sendMessage(
-        prompt: prompt.trim(),
+        prompt: requestPrompt,
         attachments: attachments,
         history: history,
         selectedModel: modelForRequest,
-        endpoints: endpoints,
-        endpointModels: endpointModels,
+        endpoints: request.endpoints,
+        endpointModels: request.endpointModels,
         genSettings: genSettings,
         voiceSettings: voiceSettings,
         geminiApiKey: geminiApiKey,
@@ -1037,7 +1491,7 @@ class AdoetzAppState extends ChangeNotifier {
     final attachments = messages[index].attachments;
     final trimmed = messages.sublist(0, index);
 
-    final newSession = Session.empty();
+    final newSession = Session.empty(null, activeChatTarget.id);
     final forkedSession = newSession.copyWith(
       title: '${session.title} (Branch)',
       messages: trimmed,
@@ -1058,7 +1512,7 @@ class AdoetzAppState extends ChangeNotifier {
         final user = session.messages[i];
         final trimmed = session.messages.sublist(0, i);
 
-        final newSession = Session.empty();
+        final newSession = Session.empty(null, activeChatTarget.id);
         final forkedSession = newSession.copyWith(
           title: '${session.title} (Branch)',
           messages: trimmed,
@@ -1071,6 +1525,112 @@ class AdoetzAppState extends ChangeNotifier {
         return;
       }
     }
+  }
+
+  String formatTargetName(String name) {
+    final clean = name.trim();
+    if (clean.isEmpty) return 'Chat Target';
+    if (clean.toLowerCase() == 'gemini-2.5-flash') return 'Gemini 2.5 Flash';
+    return clean
+        .split(RegExp(r'[-_]'))
+        .where((part) => part.isNotEmpty)
+        .map((part) {
+          final lower = part.toLowerCase();
+          if (lower == 'gpt') return 'GPT';
+          if (lower == 'ai') return 'AI';
+          if (lower == 'api') return 'API';
+          if (lower.length <= 2 && RegExp(r'^\d+$').hasMatch(lower)) {
+            return part;
+          }
+          return part.substring(0, 1).toUpperCase() + part.substring(1);
+        })
+        .join(' ');
+  }
+
+  String _modelProviderLabel(String model) {
+    final endpointModel = endpointModels
+        .where((item) => item.name == model)
+        .firstOrNull;
+    if (endpointModel != null) {
+      final endpoint = endpoints
+          .where((item) => item.id == endpointModel.endpointId)
+          .firstOrNull;
+      return endpoint?.name.trim().isNotEmpty == true
+          ? endpoint!.name
+          : 'Endpoint';
+    }
+    return model.toLowerCase().startsWith('gemini') ? 'Gemini' : 'Model';
+  }
+
+  _TargetRequestConfig _requestConfigForTarget(ChatTarget target) {
+    if (target.isModel) {
+      final model = target.modelId?.trim().isNotEmpty == true
+          ? target.modelId!.trim()
+          : selectedModel;
+      return _TargetRequestConfig(
+        model: model,
+        endpoints: endpoints,
+        endpointModels: endpointModels,
+      );
+    }
+
+    final connector = agentConnectors
+        .where((item) => item.id == target.connectorId)
+        .firstOrNull;
+    if (connector == null) {
+      return _TargetRequestConfig(
+        model: target.modelId ?? target.displayName,
+        endpoints: endpoints,
+        endpointModels: endpointModels,
+        configurationError: 'Agent server is no longer configured.',
+      );
+    }
+    if (!connector.enabled) {
+      return _TargetRequestConfig(
+        model: target.modelId ?? connector.name,
+        endpoints: endpoints,
+        endpointModels: endpointModels,
+        configurationError: '${connector.name} is disabled.',
+      );
+    }
+    if (connector.baseUrl.trim().isEmpty) {
+      return _TargetRequestConfig(
+        model: target.modelId ?? connector.name,
+        endpoints: endpoints,
+        endpointModels: endpointModels,
+        configurationError: '${connector.name} has no Base URL configured.',
+      );
+    }
+    final endpoint = _endpointForConnector(connector);
+    final model = target.modelId?.trim().isNotEmpty == true
+        ? target.modelId!.trim()
+        : (connector.targets.isNotEmpty
+              ? connector.targets.first.modelId
+              : connector.name);
+    return _TargetRequestConfig(
+      model: model,
+      endpoints: [...endpoints, endpoint],
+      endpointModels: [
+        ...endpointModels,
+        EndpointModel(name: model, endpointId: endpoint.id),
+      ],
+    );
+  }
+
+  String _promptWithTargetContext(
+    String prompt,
+    Session session,
+    ChatTarget target,
+  ) {
+    final handoff = session.handoffSummary.trim();
+    if (handoff.isEmpty || target.isAgentServer) return prompt;
+    return '[Target handoff summary]\n$handoff\n[End handoff summary]\n\n$prompt';
+  }
+
+  List<Message> _historyForRequest(Session session) {
+    return session.messages
+        .where((message) => !message.isSystem)
+        .toList(growable: false);
   }
 
   void updateProfile({String? name, AppLanguage? nextLanguage}) {
@@ -1664,4 +2224,18 @@ class AdoetzAppState extends ChangeNotifier {
 
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
+}
+
+class _TargetRequestConfig {
+  const _TargetRequestConfig({
+    required this.model,
+    required this.endpoints,
+    required this.endpointModels,
+    this.configurationError,
+  });
+
+  final String model;
+  final List<EndpointConfig> endpoints;
+  final List<EndpointModel> endpointModels;
+  final String? configurationError;
 }

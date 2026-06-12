@@ -737,6 +737,9 @@ class _MessageBubble extends StatelessWidget {
     final p = AppPalette.fromBrightness(
       Theme.of(context).brightness == Brightness.dark,
     );
+    if (message.isSystem) {
+      return _TargetSwitchDivider(message: message, palette: p);
+    }
     final parsed = parseText(message.text);
     final align = message.isUser
         ? CrossAxisAlignment.end
@@ -987,6 +990,60 @@ class _MessageBubble extends StatelessWidget {
     }
 
     return bubble;
+  }
+}
+
+class _TargetSwitchDivider extends StatelessWidget {
+  const _TargetSwitchDivider({required this.message, required this.palette});
+
+  final Message message;
+  final AppPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          Expanded(child: Divider(color: palette.outline)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: palette.onSurface.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: palette.outline),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    LucideIcons.workflow,
+                    size: 13,
+                    color: palette.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 7),
+                  Flexible(
+                    child: Text(
+                      message.text,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: palette.onSurfaceVariant,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Expanded(child: Divider(color: palette.outline)),
+        ],
+      ),
+    );
   }
 }
 

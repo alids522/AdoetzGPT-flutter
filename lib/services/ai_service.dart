@@ -138,17 +138,17 @@ class AiService {
       if (endpoint.url.trim().isEmpty) {
         continue;
       }
-      if (endpoint.key.trim().isEmpty || endpoint.key == 'sk-...') {
-        warnings.add('${endpoint.name} has no API key for model fetch.');
-        continue;
-      }
       if (endpoint.skipModelFetch) {
         continue;
       }
       try {
+        final headers = <String, String>{};
+        if (endpoint.key.trim().isNotEmpty && endpoint.key != 'sk-...') {
+          headers['Authorization'] = 'Bearer ${endpoint.key}';
+        }
         final response = await _getWithProxyFallback(
           Uri.parse('${_endpointBase(endpoint.url)}/models'),
-          {'Authorization': 'Bearer ${endpoint.key}'},
+          headers,
           syncSettings,
         );
         if (response.statusCode >= 200 && response.statusCode < 300) {
@@ -191,13 +191,14 @@ class AiService {
     if (endpoint.url.trim().isEmpty) {
       throw Exception('Endpoint URL is empty.');
     }
-    if (endpoint.key.trim().isEmpty || endpoint.key == 'sk-...') {
-      throw Exception('API key is missing.');
-    }
     try {
+      final headers = <String, String>{};
+      if (endpoint.key.trim().isNotEmpty && endpoint.key != 'sk-...') {
+        headers['Authorization'] = 'Bearer ${endpoint.key}';
+      }
       final response = await _getWithProxyFallback(
         Uri.parse('${_endpointBase(endpoint.url)}/models'),
-        {'Authorization': 'Bearer ${endpoint.key}'},
+        headers,
         syncSettings,
       );
       if (response.statusCode >= 200 && response.statusCode < 300) {
@@ -270,8 +271,7 @@ class AiService {
     }
 
     if (endpoint != null &&
-        endpoint.url.trim().isNotEmpty &&
-        endpoint.key.trim().isNotEmpty) {
+        endpoint.url.trim().isNotEmpty) {
       return _sendEndpoint(
         prompt: prompt,
         attachments: attachments,
@@ -427,9 +427,12 @@ class AiService {
           )
           ..headers.addAll({
             'Content-Type': 'application/json',
-            'Authorization': 'Bearer ${endpoint.key}',
           })
           ..body = jsonEncode(payload);
+
+    if (endpoint.key.trim().isNotEmpty && endpoint.key != 'sk-...') {
+      request.headers['Authorization'] = 'Bearer ${endpoint.key}';
+    }
 
     final streamed = await _sendWithProxyFallback(request, syncSettings);
     if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
@@ -1340,6 +1343,18 @@ class AiService {
     if (uri.host.toLowerCase().contains('openrouter.ai') &&
         !uri.path.toLowerCase().contains('/api/v1')) {
       return '${uri.scheme}://${uri.host}/api/v1';
+    }
+    final path = uri.path.replaceAll(RegExp(r'/+$'), '');
+    if (path.toLowerCase().endsWith('/chat/completions')) {
+      final nextPath = path.substring(
+        0,
+        path.length - '/chat/completions'.length,
+      );
+      return uri.replace(path: nextPath.isEmpty ? '/' : nextPath).toString();
+    }
+    if (path.toLowerCase().endsWith('/chat')) {
+      final nextPath = path.substring(0, path.length - '/chat'.length);
+      return uri.replace(path: nextPath.isEmpty ? '/' : nextPath).toString();
     }
     return base;
   }
