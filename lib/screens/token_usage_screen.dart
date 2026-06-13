@@ -22,6 +22,8 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
   String chartType = 'bar';
   String selectedModel = 'all';
   String selectedEndpoint = 'all';
+  String selectedSession = 'all';
+  DateTimeRange? customDateRange;
 
   static const colors = [
     Color(0xffffffff),
@@ -51,6 +53,15 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
     final endpoints =
         app.tokenUsageData.map((item) => item.endpoint).toSet().toList()
           ..sort();
+    
+    final sessionsMap = {
+      for (final s in app.sessions) s.id: s.title,
+    };
+    final sessionIds = app.tokenUsageData
+        .map((item) => item.sessionId)
+        .whereType<String>()
+        .toSet()
+        .toList();
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 120),
@@ -105,12 +116,32 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
                   _ChoiceGroup(
                     value: timeFilter,
                     values: {
+                      'hour': 'Last 1H',
                       'today': copy.t('tokenUsage', 'today'),
                       'week': copy.t('tokenUsage', 'thisWeek'),
                       'month': copy.t('tokenUsage', 'thisMonth'),
+                      'custom': customDateRange != null
+                          ? '${DateFormat.Md().format(customDateRange!.start)} - ${DateFormat.Md().format(customDateRange!.end)}'
+                          : 'Custom Date',
                       'all': copy.t('tokenUsage', 'allTime'),
                     },
-                    onChanged: (value) => setState(() => timeFilter = value),
+                    onChanged: (value) async {
+                      if (value == 'custom') {
+                        final range = await showDateRangePicker(
+                          context: context,
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime.now().add(const Duration(days: 1)),
+                        );
+                        if (range != null) {
+                          setState(() {
+                            timeFilter = value;
+                            customDateRange = range;
+                          });
+                        }
+                      } else {
+                        setState(() => timeFilter = value);
+                      }
+                    },
                   ),
                   _Dropdown(
                     value: selectedModel,
@@ -124,6 +155,17 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
                     labels: {'all': copy.t('tokenUsage', 'allEndpoints')},
                     onChanged: (value) =>
                         setState(() => selectedEndpoint = value),
+                  ),
+                  _Dropdown(
+                    value: selectedSession,
+                    values: ['all', ...sessionIds],
+                    labels: {
+                      'all': 'All Sessions',
+                      for (final id in sessionIds)
+                        id: sessionsMap[id] ?? 'Unknown Session',
+                    },
+                    onChanged: (value) =>
+                        setState(() => selectedSession = value),
                   ),
                   _ChoiceGroup(
                     value: groupBy,
@@ -162,6 +204,18 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
                 value: totals.output,
                 color: p.secondary,
               ),
+              if (totals.cachedInput > 0)
+                _StatCard(
+                  label: 'Cache Hits',
+                  value: totals.cachedInput,
+                  color: const Color(0xff22c55e),
+                ),
+              if (totals.cacheCreation > 0)
+                _StatCard(
+                  label: 'Cache Writes',
+                  value: totals.cacheCreation,
+                  color: const Color(0xfff59e0b),
+                ),
             ];
             return wide
                 ? Row(
@@ -172,11 +226,13 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
                       ],
                     ],
                   )
-                : Column(
+                : Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
                     children: cards
                         .map(
-                          (card) => Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
+                          (card) => SizedBox(
+                            width: (constraints.maxWidth - 16) / 2,
                             child: card,
                           ),
                         )
@@ -292,17 +348,29 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
 
   List<TokenUsageRecord> _filtered(List<TokenUsageRecord> data) {
     final now = DateTime.now().millisecondsSinceEpoch;
+    const hour = 60 * 60 * 1000;
     const day = 24 * 60 * 60 * 1000;
+    
     final start = switch (timeFilter) {
+      'hour' => now - hour,
       'today' => now - day,
       'week' => now - 7 * day,
       'month' => now - 30 * day,
+      'custom' => customDateRange?.start.millisecondsSinceEpoch ?? 0,
       _ => 0,
     };
+    
+    final end = switch (timeFilter) {
+      'custom' => customDateRange?.end.add(const Duration(days: 1)).millisecondsSinceEpoch ?? now,
+      _ => now,
+    };
+
     return data.where((item) {
       return item.timestamp >= start &&
+          item.timestamp <= end &&
           (selectedModel == 'all' || item.model == selectedModel) &&
-          (selectedEndpoint == 'all' || item.endpoint == selectedEndpoint);
+          (selectedEndpoint == 'all' || item.endpoint == selectedEndpoint) &&
+          (selectedSession == 'all' || item.sessionId == selectedSession);
     }).toList();
   }
 
@@ -335,6 +403,8 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
       totals.input += item.inputTokens;
       totals.output += item.outputTokens;
       totals.total += item.totalTokens;
+      totals.cachedInput += item.cachedInputTokens;
+      totals.cacheCreation += item.cacheCreationInputTokens;
     }
     return totals;
   }
@@ -354,12 +424,12 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
             return PieChartSectionData(
               color: colors[entry.key % colors.length],
               value: item.total.toDouble(),
-              title: '${percent.toStringAsFixed(0)}%',
+              title: '${item.name}\n${percent.toStringAsFixed(0)}%',
               radius: 88,
               titleStyle: TextStyle(
                 color: entry.key == 0 ? Colors.black : Colors.white,
                 fontWeight: FontWeight.w900,
-                fontSize: 12,
+                fontSize: 10,
               ),
             );
           }).toList(),
@@ -385,13 +455,31 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
             getDrawingHorizontalLine: (_) =>
                 FlLine(color: p.outline, strokeWidth: 1),
           ),
-          titlesData: const FlTitlesData(
-            leftTitles: AxisTitles(
+          titlesData: FlTitlesData(
+            leftTitles: const AxisTitles(
               sideTitles: SideTitles(showTitles: true, reservedSize: 44),
             ),
-            bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                getTitlesWidget: (value, meta) {
+                  final index = value.toInt();
+                  if (index >= 0 && index < entries.length) {
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        entries[index].key,
+                        style: TextStyle(color: p.onSurfaceVariant, fontSize: 10),
+                      ),
+                    );
+                  }
+                  return const SizedBox.shrink();
+                },
+                reservedSize: 30,
+              ),
+            ),
+            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           ),
           borderData: FlBorderData(show: false),
           lineBarsData: [
@@ -424,13 +512,37 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
               FlLine(color: p.outline, strokeWidth: 1),
         ),
         borderData: FlBorderData(show: false),
-        titlesData: const FlTitlesData(
-          leftTitles: AxisTitles(
+        titlesData: FlTitlesData(
+          leftTitles: const AxisTitles(
             sideTitles: SideTitles(showTitles: true, reservedSize: 44),
           ),
-          bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              getTitlesWidget: (value, meta) {
+                final index = value.toInt();
+                final items = grouped.take(10).toList();
+                if (index >= 0 && index < items.length) {
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: SizedBox(
+                      width: 50,
+                      child: Text(
+                        items[index].name,
+                        style: TextStyle(color: p.onSurfaceVariant, fontSize: 10),
+                        textAlign: TextAlign.center,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  );
+                }
+                return const SizedBox.shrink();
+              },
+              reservedSize: 30,
+            ),
+          ),
+          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
         ),
         barGroups: grouped.take(10).toList().asMap().entries.map((entry) {
           final item = entry.value;
@@ -1120,6 +1232,8 @@ class _Totals {
   int input = 0;
   int output = 0;
   int total = 0;
+  int cachedInput = 0;
+  int cacheCreation = 0;
 }
 
 class _Group {

@@ -2048,6 +2048,82 @@ class _InputPod extends StatelessWidget {
                 onPressed: app.toggleArtifactMode,
               ),
               const SizedBox(width: 12),
+              Builder(
+                builder: (context) {
+                  final sessionRecords = app.tokenUsageData.where((r) => r.sessionId == app.currentSessionId);
+                  int inTok = 0, outTok = 0, hitTok = 0, writeTok = 0;
+                  if (sessionRecords.isNotEmpty) {
+                    for (final r in sessionRecords) {
+                      inTok += r.inputTokens;
+                      outTok += r.outputTokens;
+                      hitTok += r.cachedInputTokens;
+                      writeTok += r.cacheCreationInputTokens;
+                    }
+                  } else {
+                    for (final m in app.currentSession.messages) {
+                      if (m.tokenCount != null) {
+                        outTok += m.tokenCount!;
+                      }
+                    }
+                  }
+                  
+                  Widget stat(IconData icon, int value, String tooltip, {bool isLast = false}) {
+                    if (value == 0 && tooltip != 'Output Tokens') return const SizedBox.shrink();
+                    return Tooltip(
+                      message: tooltip,
+                      child: Padding(
+                        padding: EdgeInsets.only(right: isLast ? 0 : 8),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(icon, size: 10, color: p.onSurface),
+                            const SizedBox(width: 3),
+                            Text(
+                              formatTokenCount(value),
+                              style: TextStyle(
+                                color: p.onSurface,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                fontFeatures: const [FontFeature.tabularFigures()],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+                  
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: p.onSurface.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              stat(LucideIcons.arrowUp, inTok, 'Input Tokens'),
+                              stat(LucideIcons.zap, hitTok, 'Cache Hits'),
+                              stat(LucideIcons.database, writeTok, 'Cache Writes'),
+                              stat(LucideIcons.arrowDown, outTok, 'Output Tokens', isLast: true),
+                            ],
+                          ),
+                          const SizedBox(height: 3),
+                          const SizedBox(height: 3),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
               AnimatedBuilder(
                 animation: input,
                 builder: (context, _) {

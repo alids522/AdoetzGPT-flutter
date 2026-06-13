@@ -484,6 +484,7 @@ class EndpointConfig {
     required this.name,
     this.skipModelFetch = false,
     this.models = const [],
+    this.enabled = true,
   });
 
   final String id;
@@ -492,6 +493,7 @@ class EndpointConfig {
   final String name;
   final bool skipModelFetch;
   final List<String> models;
+  final bool enabled;
 
   EndpointConfig copyWith({
     String? id,
@@ -500,6 +502,7 @@ class EndpointConfig {
     String? name,
     bool? skipModelFetch,
     List<String>? models,
+    bool? enabled,
   }) {
     return EndpointConfig(
       id: id ?? this.id,
@@ -508,6 +511,7 @@ class EndpointConfig {
       name: name ?? this.name,
       skipModelFetch: skipModelFetch ?? this.skipModelFetch,
       models: models ?? this.models,
+      enabled: enabled ?? this.enabled,
     );
   }
 
@@ -521,6 +525,7 @@ class EndpointConfig {
       models: (json['models'] is List)
           ? (json['models'] as List).map((item) => item.toString()).toList()
           : const [],
+      enabled: json['enabled'] == null ? true : boolValue(json['enabled']),
     );
   }
 
@@ -529,8 +534,9 @@ class EndpointConfig {
     'url': url,
     'key': key,
     'name': name,
-    if (skipModelFetch) 'skipModelFetch': skipModelFetch,
-    if (models.isNotEmpty) 'models': models,
+    'skipModelFetch': skipModelFetch,
+    'models': models,
+    'enabled': enabled,
   };
 }
 
@@ -1286,6 +1292,7 @@ class TokenUsageRecord {
     required this.totalTokens,
     this.cachedInputTokens = 0,
     this.cacheCreationInputTokens = 0,
+    this.sessionId,
   });
 
   final int timestamp;
@@ -1296,6 +1303,7 @@ class TokenUsageRecord {
   final int totalTokens;
   final int cachedInputTokens;
   final int cacheCreationInputTokens;
+  final String? sessionId;
 
   factory TokenUsageRecord.fromJson(Map<String, dynamic> json) {
     return TokenUsageRecord(
@@ -1311,6 +1319,7 @@ class TokenUsageRecord {
       cacheCreationInputTokens: intValue(
         json['cacheCreationInputTokens'] ?? json['cache_creation_input_tokens'],
       ),
+      sessionId: stringValue(json['sessionId']),
     );
   }
 
@@ -1324,6 +1333,7 @@ class TokenUsageRecord {
     if (cachedInputTokens > 0) 'cachedInputTokens': cachedInputTokens,
     if (cacheCreationInputTokens > 0)
       'cacheCreationInputTokens': cacheCreationInputTokens,
+    if (sessionId != null) 'sessionId': sessionId,
   };
 }
 

@@ -1480,6 +1480,7 @@ class AdoetzAppState extends ChangeNotifier {
           totalTokens: response.inputTokens + response.outputTokens,
           cachedInputTokens: response.cachedInputTokens,
           cacheCreationInputTokens: response.cacheCreationInputTokens,
+          sessionId: session.id,
         ),
       ];
 
@@ -2005,7 +2006,7 @@ class AdoetzAppState extends ChangeNotifier {
     try {
       final catalog = await _ai.fetchModels(
         geminiApiKey: geminiApiKey,
-        endpoints: endpoints,
+        endpoints: endpoints.where((e) => e.enabled).toList(),
         syncSettings: syncSettings,
       );
       geminiModels = catalog.geminiModels;

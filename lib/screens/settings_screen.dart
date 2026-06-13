@@ -979,6 +979,11 @@ class _EndpointSection extends StatelessWidget {
                                 update(endpoint.copyWith(name: value)),
                           ),
                         ),
+                        Switch(
+                          value: endpoint.enabled,
+                          onChanged: (value) =>
+                              update(endpoint.copyWith(enabled: value)),
+                        ),
                         IconButton(
                           icon: const Icon(LucideIcons.trash2, size: 18),
                           onPressed: app.endpoints.length == 1
@@ -1648,9 +1653,9 @@ class _WebSearchSection extends StatelessWidget {
             _DropdownSetting(
               label: 'Endpoint',
               value: settings.webSearchEndpointId,
-              values: ['', ...app.endpoints.map((item) => item.id)],
+              values: ['', ...app.endpoints.where((e) => e.enabled).map((item) => item.id)],
               labels: {
-                for (final ep in app.endpoints) ep.id: ep.name,
+                for (final ep in app.endpoints.where((e) => e.enabled)) ep.id: ep.name,
                 '': 'Select endpoint',
               },
               onChanged: (value) {

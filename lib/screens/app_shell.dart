@@ -195,14 +195,17 @@ class _HeaderState extends State<_Header> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Flexible(
-                            child: Text(
-                              app.formatTargetName(activeTarget.displayName),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                                color: p.onSurface.withValues(alpha: 0.92),
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                app.formatTargetName(activeTarget.displayName),
+                                maxLines: 1,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  color: p.onSurface.withValues(alpha: 0.92),
+                                ),
                               ),
                             ),
                           ),
