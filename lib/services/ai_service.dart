@@ -16,12 +16,16 @@ class GeneratedResponse {
     required this.inputTokens,
     required this.outputTokens,
     required this.endpointName,
+    this.cachedInputTokens = 0,
+    this.cacheCreationInputTokens = 0,
   });
 
   final String text;
   final int inputTokens;
   final int outputTokens;
   final String endpointName;
+  final int cachedInputTokens;
+  final int cacheCreationInputTokens;
 }
 
 class ModelCatalog {
@@ -155,7 +159,10 @@ class AiService {
           final data = jsonDecode(response.body);
           endpointModels.addAll(
             _extractModels(data).map(
-              (m) => EndpointModel(name: m['id'] as String, endpointId: endpoint.id),
+              (m) => EndpointModel(
+                name: m['id'] as String,
+                endpointId: endpoint.id,
+              ),
             ),
           );
         } else {
@@ -226,18 +233,21 @@ class AiService {
       headers['Authorization'] = 'Bearer ${endpoint.key}';
     }
     final payload = {
-      'model': endpoint.models.isNotEmpty 
-          ? endpoint.models.first 
+      'model': endpoint.models.isNotEmpty
+          ? endpoint.models.first
           : endpoint.name.toLowerCase().replaceAll(' ', '-'),
-      'messages': [{'role': 'user', 'content': 'ping'}],
+      'messages': [
+        {'role': 'user', 'content': 'ping'},
+      ],
       'max_tokens': 1,
     };
-    final request = http.Request(
-      'POST',
-      Uri.parse('${_endpointBase(endpoint.url)}/chat/completions'),
-    )
-      ..headers.addAll(headers)
-      ..body = jsonEncode(payload);
+    final request =
+        http.Request(
+            'POST',
+            Uri.parse('${_endpointBase(endpoint.url)}/chat/completions'),
+          )
+          ..headers.addAll(headers)
+          ..body = jsonEncode(payload);
 
     final streamed = await _sendWithProxyFallback(request, syncSettings);
     if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
@@ -246,7 +256,9 @@ class AiService {
       if (streamed.statusCode == 400 && body.toLowerCase().contains('model')) {
         return;
       }
-      throw Exception(_extractApiError(body, 'Ping failed (${streamed.statusCode})'));
+      throw Exception(
+        _extractApiError(body, 'Ping failed (${streamed.statusCode})'),
+      );
     }
   }
 
@@ -257,6 +269,7 @@ class AiService {
     required String selectedModel,
     required List<EndpointConfig> endpoints,
     required List<EndpointModel> endpointModels,
+    int? contextLimit,
     required GenerationSettings genSettings,
     required VoiceSettings voiceSettings,
     required String geminiApiKey,
@@ -306,8 +319,7 @@ class AiService {
       }
     }
 
-    if (endpoint != null &&
-        endpoint.url.trim().isNotEmpty) {
+    if (endpoint != null && endpoint.url.trim().isNotEmpty) {
       return _sendEndpoint(
         prompt: prompt,
         attachments: attachments,
@@ -320,6 +332,7 @@ class AiService {
         thinkingMode: thinkingMode,
         artifactMode: artifactMode,
         syncSettings: syncSettings,
+        contextLimit: contextLimit,
         onText: onText,
       );
     }
@@ -335,6 +348,7 @@ class AiService {
       memories: memories,
       thinkingMode: thinkingMode,
       artifactMode: artifactMode,
+      contextLimit: contextLimit,
       onText: onText,
     );
   }
@@ -407,14 +421,19 @@ class AiService {
     required bool thinkingMode,
     required bool artifactMode,
     required SyncSettings syncSettings,
+    int? contextLimit,
     required TextDelta onText,
   }) async {
-    final systemText =
-        '${_systemText(voiceSettings)}${thinkingMode ? ' Start with concise reasoning enclosed in <think>...</think> tags before the final answer.' : ''}\n\nPay attention to any user context or memories shared in the conversation.${artifactMode ? _artifactInstruction : ''}';
     final memoryText = memories.isEmpty
         ? ''
         : '\n\n=== IMPORTANT USER CONTEXT ===\n${memories.map((m) => '- ${m.content}').join('\n')}\n=== END USER CONTEXT ===\n\n';
-    final finalPrompt = '$memoryText$searchContext$prompt';
+    final thinkingInstruction = thinkingMode
+        ? ' Start with concise reasoning enclosed in <think>...</think> tags before the final answer.'
+        : ' Do not include hidden reasoning, chain-of-thought, reasoning_content, or <think> tags. Answer directly.';
+    final systemText =
+        '${_systemText(voiceSettings)}$thinkingInstruction\n\nPay attention to any user context or memories shared in the conversation.${artifactMode ? _artifactInstruction : ''}$memoryText';
+
+    final finalPrompt = '$searchContext$prompt';
     final content = attachments.isEmpty
         ? finalPrompt
         : [
@@ -444,7 +463,10 @@ class AiService {
       {'role': 'system', 'content': systemText},
       ..._openAiHistory(
         history,
-        max(4000, (contextWindow(selectedModel) * 0.6).floor()),
+        max(
+          4000,
+          ((contextLimit ?? contextWindow(selectedModel)) * 0.6).floor(),
+        ),
       ),
       {'role': 'user', 'content': content},
     ];
@@ -454,6 +476,11 @@ class AiService {
       'messages': messages,
       'stream': true,
       'stream_options': {'include_usage': true},
+      if (!thinkingMode &&
+          selectedModel.toLowerCase().contains('deepseek')) ...{
+        'include_reasoning': false,
+        'thinking': {'type': 'disabled'},
+      },
     };
 
     final request =
@@ -461,9 +488,7 @@ class AiService {
             'POST',
             Uri.parse('${_endpointBase(endpoint.url)}/chat/completions'),
           )
-          ..headers.addAll({
-            'Content-Type': 'application/json',
-          })
+          ..headers.addAll({'Content-Type': 'application/json'})
           ..body = jsonEncode(payload);
 
     if (endpoint.key.trim().isNotEmpty && endpoint.key != 'sk-...') {
@@ -483,6 +508,8 @@ class AiService {
         countTokens(systemText) +
         history.fold<int>(0, (sum, item) => sum + countTokens(item.text));
     var outputTokens = 0;
+    var cachedInputTokens = 0;
+    var cacheCreationInputTokens = 0;
     var inReasoning = false;
 
     await for (final line
@@ -491,7 +518,7 @@ class AiService {
             .transform(const LineSplitter())) {
       final trimmed = line.trim();
       rawBuffer.writeln(trimmed);
-      
+
       if (!trimmed.startsWith('data: ')) continue;
       final dataText = trimmed.substring(6).trim();
       if (dataText == '[DONE]') break;
@@ -499,15 +526,26 @@ class AiService {
         final data = jsonDecode(dataText);
         final usage = data['usage'];
         if (usage is Map) {
-          inputTokens = intValue(usage['prompt_tokens'], inputTokens);
-          outputTokens = intValue(usage['completion_tokens'], outputTokens);
+          inputTokens = _usageInputTokens(usage, inputTokens);
+          outputTokens = _usageOutputTokens(usage, outputTokens);
+          final cacheUsage = _extractPromptCacheUsage(usage);
+          cachedInputTokens = max(
+            cachedInputTokens,
+            cacheUsage.cachedInputTokens,
+          );
+          cacheCreationInputTokens = max(
+            cacheCreationInputTokens,
+            cacheUsage.cacheCreationInputTokens,
+          );
         }
         final choice =
             data['choices'] is List && (data['choices'] as List).isNotEmpty
             ? data['choices'][0]
             : null;
         final delta = choice is Map ? choice['delta'] : null;
-        if (delta is Map && delta['reasoning_content'] != null) {
+        if (thinkingMode &&
+            delta is Map &&
+            delta['reasoning_content'] != null) {
           if (!inReasoning) {
             inReasoning = true;
             buffer.write('<think>\n');
@@ -520,29 +558,35 @@ class AiService {
         var content = delta is Map
             ? stringValue(delta['content'])
             : messageObj is Map
-                ? stringValue(messageObj['content'])
-                : stringValue(choice is Map ? choice['text'] : '');
-                
+            ? stringValue(messageObj['content'])
+            : stringValue(choice is Map ? choice['text'] : '');
+
         // Fallback for tools if content is empty
         if (content.isEmpty) {
-          final tools = delta is Map ? delta['tool_calls'] : (messageObj is Map ? messageObj['tool_calls'] : null);
+          final tools = delta is Map
+              ? delta['tool_calls']
+              : (messageObj is Map ? messageObj['tool_calls'] : null);
           if (tools is List && tools.isNotEmpty) {
             content = '\n```json\n// Tool Call\n${jsonEncode(tools)}\n```\n';
           }
         }
-        
+
         if (content.isNotEmpty) {
           if (inReasoning) {
             inReasoning = false;
             buffer.write('\n</think>\n');
           }
           buffer.write(content);
-          onText(buffer.toString());
+          onText(
+            thinkingMode
+                ? buffer.toString()
+                : stripThinkingBlocks(buffer.toString()),
+          );
         }
       } catch (_) {}
     }
     if (inReasoning) buffer.write('\n</think>\n');
-    
+
     // Fallback: if the stream didn't yield any text, try parsing the entire raw buffer as a flat JSON response
     // in case the server ignored the "stream: true" flag.
     if (buffer.isEmpty && rawBuffer.isNotEmpty) {
@@ -550,6 +594,20 @@ class AiService {
         final rawStr = rawBuffer.toString().trim();
         if (rawStr.startsWith('{')) {
           final parsed = jsonDecode(rawStr);
+          final usage = parsed['usage'];
+          if (usage is Map) {
+            inputTokens = _usageInputTokens(usage, inputTokens);
+            outputTokens = _usageOutputTokens(usage, outputTokens);
+            final cacheUsage = _extractPromptCacheUsage(usage);
+            cachedInputTokens = max(
+              cachedInputTokens,
+              cacheUsage.cachedInputTokens,
+            );
+            cacheCreationInputTokens = max(
+              cacheCreationInputTokens,
+              cacheUsage.cacheCreationInputTokens,
+            );
+          }
           final choice = parsed['choices']?[0];
           final content = choice?['message']?['content'] ?? choice?['text'];
           if (content != null) {
@@ -558,20 +616,24 @@ class AiService {
         }
       } catch (_) {}
     }
-    
+
     // Final fallback if absolutely nothing was extracted
     if (buffer.isEmpty && rawBuffer.toString().trim().isNotEmpty) {
       buffer.write('```\n${rawBuffer.toString().trim()}\n```');
     }
 
-    outputTokens = outputTokens == 0
-        ? countTokens(buffer.toString())
-        : outputTokens;
+    final responseText = thinkingMode
+        ? buffer.toString()
+        : stripThinkingBlocks(buffer.toString());
+
+    outputTokens = outputTokens == 0 ? countTokens(responseText) : outputTokens;
     return GeneratedResponse(
-      text: buffer.toString(),
+      text: responseText,
       inputTokens: inputTokens,
       outputTokens: outputTokens,
       endpointName: endpoint.name,
+      cachedInputTokens: cachedInputTokens,
+      cacheCreationInputTokens: cacheCreationInputTokens,
     );
   }
 
@@ -586,6 +648,7 @@ class AiService {
     required List<Memory> memories,
     required bool thinkingMode,
     required bool artifactMode,
+    int? contextLimit,
     required TextDelta onText,
   }) async {
     final key = geminiApiKey.trim();
@@ -597,14 +660,20 @@ class AiService {
 
     final model = selectedModel.replaceFirst('models/', '');
     final memoryList = memories.isEmpty
-        ? 'No existing memories.'
-        : memories.map((m) => '- ${m.content}').join('\n');
+        ? ''
+        : '\n\n=== IMPORTANT USER CONTEXT ===\n${memories.map((m) => '- ${m.content}').join('\n')}\n=== END USER CONTEXT ===\n\n';
+    final thinkingInstruction = thinkingMode
+        ? ' Start with a thinking process enclosed in <think>...</think> tags before the final answer.'
+        : ' Do not include hidden reasoning, chain-of-thought, thoughts, or <think> tags. Answer directly.';
     final systemText =
-        '${_systemText(voiceSettings)}${thinkingMode ? ' Start with a thinking process enclosed in <think>...</think> tags before the final answer.' : ''}\n\nFORMATTING RULE: When providing code, always wrap it in Markdown triple backticks with the appropriate language identifier.${artifactMode ? _artifactInstruction : ''}\n\nCurrent Long-term Memories:\n$memoryList';
+        '${_systemText(voiceSettings)}$thinkingInstruction\n\nFORMATTING RULE: When providing code, always wrap it in Markdown triple backticks with the appropriate language identifier.${artifactMode ? _artifactInstruction : ''}$memoryList';
     final contents = [
       ..._geminiHistory(
         history,
-        max(4000, (contextWindow(selectedModel) * 0.6).floor()),
+        max(
+          4000,
+          ((contextLimit ?? contextWindow(selectedModel)) * 0.6).floor(),
+        ),
       ),
       {
         'role': 'user',
@@ -667,6 +736,7 @@ class AiService {
         if (parts is! List) continue;
         for (final part in parts.whereType<Map>()) {
           final isThought = part['thought'] == true;
+          if (isThought && !thinkingMode) continue;
           if (isThought && !inThought) {
             inThought = true;
             buffer.write('<think>\n');
@@ -686,17 +756,24 @@ class AiService {
             );
           }
         }
-        onText(buffer.toString());
+        onText(
+          thinkingMode
+              ? buffer.toString()
+              : stripThinkingBlocks(buffer.toString()),
+        );
       } catch (_) {}
     }
     if (inThought) buffer.write('\n</think>\n');
+    final responseText = thinkingMode
+        ? buffer.toString()
+        : stripThinkingBlocks(buffer.toString());
     final inputTokens =
         countTokens(prompt) +
         countTokens(systemText) +
         history.fold<int>(0, (sum, item) => sum + countTokens(item.text));
-    final outputTokens = countTokens(buffer.toString());
+    final outputTokens = countTokens(responseText);
     return GeneratedResponse(
-      text: buffer.toString(),
+      text: responseText,
       inputTokens: inputTokens,
       outputTokens: outputTokens,
       endpointName: 'Gemini',
@@ -991,7 +1068,10 @@ class AiService {
               item['id'],
               stringValue(item['name'], stringValue(item['model'])),
             );
-            final ctx = item['context_length'] ?? item['max_tokens'] ?? item['max_context'];
+            final ctx =
+                item['context_length'] ??
+                item['max_tokens'] ??
+                item['max_context'];
             return {
               'id': name,
               if (ctx != null && int.tryParse(ctx.toString()) != null)
@@ -1001,8 +1081,14 @@ class AiService {
           return {'id': ''};
         })
         .map((m) {
-          final id = (m['id'] as String).replaceFirst(RegExp(r'^models/'), '').trim();
-          return {'id': id, if (m.containsKey('context_length')) 'context_length': m['context_length']};
+          final id = (m['id'] as String)
+              .replaceFirst(RegExp(r'^models/'), '')
+              .trim();
+          return {
+            'id': id,
+            if (m.containsKey('context_length'))
+              'context_length': m['context_length'],
+          };
         })
         .where((m) => (m['id'] as String).isNotEmpty)
         .toList();
@@ -1477,6 +1563,103 @@ ParsedText parseText(String text) {
     mainContent: main,
     isThinkingStill: !hasClosed,
   );
+}
+
+String stripThinkingBlocks(String text) {
+  final withoutClosed = text.replaceAll(
+    RegExp(r'<think>[\s\S]*?</think>', caseSensitive: false),
+    '',
+  );
+  return withoutClosed
+      .replaceAll(RegExp(r'<think>[\s\S]*$', caseSensitive: false), '')
+      .replaceAll(RegExp(r'</think>', caseSensitive: false), '')
+      .trimLeft();
+}
+
+class _PromptCacheUsage {
+  const _PromptCacheUsage({
+    required this.cachedInputTokens,
+    required this.cacheCreationInputTokens,
+  });
+
+  final int cachedInputTokens;
+  final int cacheCreationInputTokens;
+}
+
+_PromptCacheUsage _extractPromptCacheUsage(Map<dynamic, dynamic> usage) {
+  final promptDetails = _mapValue(
+    usage['prompt_tokens_details'] ??
+        usage['promptTokensDetails'] ??
+        usage['input_tokens_details'] ??
+        usage['inputTokensDetails'],
+  );
+  final cachedInputTokens = _firstPositiveInt([
+    usage['cached_tokens'],
+    usage['cachedTokens'],
+    usage['cached_input_tokens'],
+    usage['cachedInputTokens'],
+    usage['cache_read_input_tokens'],
+    usage['cacheReadInputTokens'],
+    usage['prompt_cache_hit_tokens'],
+    usage['promptCacheHitTokens'],
+    usage['prompt_cache_read_tokens'],
+    usage['promptCacheReadTokens'],
+    promptDetails?['cached_tokens'],
+    promptDetails?['cachedTokens'],
+    promptDetails?['cache_read_tokens'],
+    promptDetails?['cacheReadTokens'],
+    promptDetails?['cache_read_input_tokens'],
+    promptDetails?['cacheReadInputTokens'],
+  ]);
+  final cacheCreationInputTokens = _firstPositiveInt([
+    usage['cache_creation_input_tokens'],
+    usage['cacheCreationInputTokens'],
+    usage['prompt_cache_creation_tokens'],
+    usage['promptCacheCreationTokens'],
+    usage['prompt_cache_miss_tokens'],
+    usage['promptCacheMissTokens'],
+    promptDetails?['cache_creation_tokens'],
+    promptDetails?['cacheCreationTokens'],
+    promptDetails?['cache_creation_input_tokens'],
+    promptDetails?['cacheCreationInputTokens'],
+  ]);
+  return _PromptCacheUsage(
+    cachedInputTokens: cachedInputTokens,
+    cacheCreationInputTokens: cacheCreationInputTokens,
+  );
+}
+
+Map<String, dynamic>? _mapValue(Object? value) {
+  if (value is! Map) return null;
+  return Map<String, dynamic>.from(value);
+}
+
+int _firstPositiveInt(Iterable<Object?> values) {
+  for (final value in values) {
+    final parsed = intValue(value);
+    if (parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+int _usageInputTokens(Map<dynamic, dynamic> usage, int fallback) {
+  final parsed = _firstPositiveInt([
+    usage['prompt_tokens'],
+    usage['promptTokens'],
+    usage['input_tokens'],
+    usage['inputTokens'],
+  ]);
+  return parsed > 0 ? parsed : fallback;
+}
+
+int _usageOutputTokens(Map<dynamic, dynamic> usage, int fallback) {
+  final parsed = _firstPositiveInt([
+    usage['completion_tokens'],
+    usage['completionTokens'],
+    usage['output_tokens'],
+    usage['outputTokens'],
+  ]);
+  return parsed > 0 ? parsed : fallback;
 }
 
 int countTokens(String text) => max(1, (text.length / 4).ceil());

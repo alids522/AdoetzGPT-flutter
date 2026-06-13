@@ -1305,7 +1305,10 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
                 data: processedContent,
                 onTapLink: (text, href, title) {
                   if (href != null) {
-                    launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
+                    launchUrl(
+                      Uri.parse(href),
+                      mode: LaunchMode.externalApplication,
+                    );
                   }
                 },
                 // ignore: deprecated_member_use
@@ -1317,7 +1320,10 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
                         return Image.memory(
                           bytes,
                           errorBuilder: (context, error, stackTrace) =>
-                              const Icon(Icons.broken_image, color: Colors.grey),
+                              const Icon(
+                                Icons.broken_image,
+                                color: Colors.grey,
+                              ),
                         );
                       }
                     } catch (_) {}
@@ -1997,15 +2003,10 @@ class _InputPod extends StatelessWidget {
       (sum, message) => sum + countTokens(message.text),
     );
     final target = app.activeChatTarget;
-    final int contextMax;
-    final bool isHardcoded;
-    if (target.contextLength != null) {
-      contextMax = target.contextLength!;
-      isHardcoded = false;
-    } else {
-      contextMax = contextWindow(target.modelId ?? app.selectedModel);
-      isHardcoded = true;
-    }
+    final contextMax = app.contextWindowForTarget(target);
+    final contextSource = app.contextWindowSourceForTarget(target);
+    final isHardcoded = contextSource == 'Estimated context length';
+    final isCustom = contextSource == 'Custom';
     final liveTokens = historyTokens + countTokens(input.text);
     final compact = MediaQuery.of(context).size.width < 560;
     final contextRatio = (liveTokens / contextMax).clamp(0.0, 1.0).toDouble();
@@ -2056,61 +2057,80 @@ class _InputPod extends StatelessWidget {
                 onPressed: app.toggleArtifactMode,
               ),
               const SizedBox(width: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: p.onSurface.withValues(alpha: 0.05),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          '${formatTokenCount(liveTokens)} / ${formatTokenCount(contextMax)}',
-                          style: TextStyle(
-                            color: p.onSurface,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                            fontFeatures: const [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Tooltip(
-                          message: isHardcoded ? 'Estimated context length' : 'Verified from API',
-                          child: Icon(
-                            isHardcoded ? LucideIcons.wand2 : LucideIcons.checkCircle2,
-                            size: 10,
-                            color: isHardcoded ? p.onSurface.withValues(alpha: 0.5) : const Color(0xff16a34a),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    SizedBox(
-                      width: compact ? 50 : 70,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(2),
-                        child: SizedBox(
-                          height: 3,
-                          child: LinearProgressIndicator(
-                            value: contextRatio,
-                            backgroundColor: p.onSurface.withValues(
-                              alpha: 0.08,
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () =>
+                    _showContextWindowEditor(context, app, target, contextMax),
+                onLongPress: () =>
+                    _showContextWindowEditor(context, app, target, contextMax),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: p.onSurface.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '${formatTokenCount(liveTokens)} / ${formatTokenCount(contextMax)}',
+                            style: TextStyle(
+                              color: p.onSurface,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
                             ),
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              contextColor,
+                          ),
+                          const SizedBox(width: 4),
+                          Tooltip(
+                            message: isCustom
+                                ? 'Custom context length'
+                                : contextSource,
+                            child: Icon(
+                              isCustom
+                                  ? LucideIcons.slidersHorizontal
+                                  : isHardcoded
+                                  ? LucideIcons.wand2
+                                  : LucideIcons.checkCircle2,
+                              size: 10,
+                              color: isCustom
+                                  ? p.primary
+                                  : isHardcoded
+                                  ? p.onSurface.withValues(alpha: 0.5)
+                                  : const Color(0xff16a34a),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      SizedBox(
+                        width: compact ? 50 : 70,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(2),
+                          child: SizedBox(
+                            height: 3,
+                            child: LinearProgressIndicator(
+                              value: contextRatio,
+                              backgroundColor: p.onSurface.withValues(
+                                alpha: 0.08,
+                              ),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                contextColor,
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -2299,6 +2319,70 @@ class _InputPod extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _showContextWindowEditor(
+    BuildContext context,
+    AdoetzAppState app,
+    ChatTarget target,
+    int currentValue,
+  ) async {
+    final controller = TextEditingController(text: currentValue.toString());
+    final defaultValue =
+        target.contextLength ??
+        contextWindow(target.modelId ?? app.selectedModel);
+    final result = await showDialog<int?>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Context Window'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              app.formatTargetName(target.displayName),
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: 'Tokens',
+                helperText:
+                    'Default: ${formatTokenCount(defaultValue)}. Leave blank to reset.',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, -1),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: const Text('Reset'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final text = controller.text.replaceAll(',', '').trim();
+              Navigator.pop(context, int.tryParse(text) ?? currentValue);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (result == -1) return;
+    if (result == null) {
+      app.updateContextWindowOverride(target, null);
+    } else {
+      app.updateContextWindowOverride(target, result);
+    }
   }
 }
 

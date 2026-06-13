@@ -40,6 +40,13 @@ List<Map<String, dynamic>> mapList(Object? value) {
   return const [];
 }
 
+Map<String, int> _intMap(Object? value) {
+  if (value is! Map) return const {};
+  return Map<String, dynamic>.from(value).map(
+    (key, item) => MapEntry(key, intValue(item)),
+  )..removeWhere((key, item) => key.trim().isEmpty || item <= 0);
+}
+
 enum ChatTargetType { model, agentServer }
 
 ChatTargetType chatTargetTypeFromJson(Object? value) {
@@ -644,6 +651,8 @@ class ConnectorTarget {
   factory ConnectorTarget.fromJson(Map<String, dynamic> json) {
     final modelId = stringValue(json['model_id'], stringValue(json['modelId']));
     final now = DateTime.now().millisecondsSinceEpoch;
+    final rawContextLength = json['context_length'] ?? json['contextLength'];
+    final parsedContextLength = intValue(rawContextLength);
     return ConnectorTarget(
       id: stringValue(
         json['id'],
@@ -658,8 +667,7 @@ class ConnectorTarget {
         json['display_name'],
         stringValue(json['displayName'], modelId),
       ),
-      contextLength:
-          json['context_length'] as int? ?? json['contextLength'] as int?,
+      contextLength: parsedContextLength > 0 ? parsedContextLength : null,
       enabled: boolValue(json['enabled'], true),
       createdAt: intValue(json['created_at'], intValue(json['createdAt'], now)),
       updatedAt: intValue(json['updated_at'], intValue(json['updatedAt'], now)),
@@ -1264,6 +1272,8 @@ class TokenUsageRecord {
     required this.inputTokens,
     required this.outputTokens,
     required this.totalTokens,
+    this.cachedInputTokens = 0,
+    this.cacheCreationInputTokens = 0,
   });
 
   final int timestamp;
@@ -1272,6 +1282,8 @@ class TokenUsageRecord {
   final int inputTokens;
   final int outputTokens;
   final int totalTokens;
+  final int cachedInputTokens;
+  final int cacheCreationInputTokens;
 
   factory TokenUsageRecord.fromJson(Map<String, dynamic> json) {
     return TokenUsageRecord(
@@ -1281,6 +1293,12 @@ class TokenUsageRecord {
       inputTokens: intValue(json['inputTokens']),
       outputTokens: intValue(json['outputTokens']),
       totalTokens: intValue(json['totalTokens']),
+      cachedInputTokens: intValue(
+        json['cachedInputTokens'] ?? json['cached_input_tokens'],
+      ),
+      cacheCreationInputTokens: intValue(
+        json['cacheCreationInputTokens'] ?? json['cache_creation_input_tokens'],
+      ),
     );
   }
 
@@ -1291,6 +1309,9 @@ class TokenUsageRecord {
     'inputTokens': inputTokens,
     'outputTokens': outputTokens,
     'totalTokens': totalTokens,
+    if (cachedInputTokens > 0) 'cachedInputTokens': cachedInputTokens,
+    if (cacheCreationInputTokens > 0)
+      'cacheCreationInputTokens': cacheCreationInputTokens,
   };
 }
 
@@ -1530,6 +1551,7 @@ class PersistedAppState {
     required this.geminiApiKey,
     required this.endpoints,
     required this.agentConnectors,
+    required this.modelContextOverrides,
     required this.genSettings,
     required this.voiceSettings,
     required this.sessions,
@@ -1557,6 +1579,7 @@ class PersistedAppState {
   final String geminiApiKey;
   final List<EndpointConfig> endpoints;
   final List<AgentConnector> agentConnectors;
+  final Map<String, int> modelContextOverrides;
   final GenerationSettings genSettings;
   final VoiceSettings voiceSettings;
   final List<Session> sessions;
@@ -1593,6 +1616,7 @@ class PersistedAppState {
         ),
       ],
       agentConnectors: const [],
+      modelContextOverrides: const {},
       genSettings: const GenerationSettings(),
       voiceSettings: const VoiceSettings(),
       sessions: [session],
@@ -1639,6 +1663,9 @@ class PersistedAppState {
       agentConnectors: mapList(
         json['agentConnectors'] ?? json['agent_connectors'],
       ).map(AgentConnector.fromJson).toList(),
+      modelContextOverrides: _intMap(
+        json['modelContextOverrides'] ?? json['model_context_overrides'],
+      ),
       genSettings: GenerationSettings.fromJson(
         json['genSettings'] is Map
             ? Map<String, dynamic>.from(json['genSettings'])
@@ -1690,6 +1717,7 @@ class PersistedAppState {
     'agentConnectors': agentConnectors
         .map((item) => item.toJson(includeSecrets: includeSecrets))
         .toList(),
+    'modelContextOverrides': modelContextOverrides,
     'genSettings': genSettings.toJson(),
     'voiceSettings': voiceSettings.toJson(),
     'sessions': sessions.map((item) => item.toJson()).toList(),

@@ -36,6 +36,7 @@ class AdoetzAppState extends ChangeNotifier {
   String _pendingStreamText = '';
   String _lastDisplayedStreamText = '';
   bool _generationStopRequested = false;
+  int _stateSavedAt = 0;
 
   final _audioPlayer = AudioPlayer();
 
@@ -88,6 +89,7 @@ class AdoetzAppState extends ChangeNotifier {
   List<Memory> memories = const [];
   List<TokenUsageRecord> tokenUsageData = const [];
   List<CustomCounter> customCounters = const [];
+  Map<String, int> modelContextOverrides = const {};
   List<String> geminiModels = const [];
   List<EndpointModel> endpointModels = const [];
   List<String> models = const ['gemini-2.5-flash'];
@@ -203,7 +205,7 @@ class AdoetzAppState extends ChangeNotifier {
     };
 
     unawaited(fetchModels());
-    unawaited(_persist());
+    unawaited(_persist(touchSavedAt: false));
     unawaited(_pullRemoteStateAfterStartup());
   }
 
@@ -221,7 +223,7 @@ class AdoetzAppState extends ChangeNotifier {
           lastSyncAt = DateTime.now().millisecondsSinceEpoch;
           syncStatus = 'Database sync loaded.';
           notifyListeners();
-          unawaited(_persist());
+          unawaited(_persist(touchSavedAt: false));
         }
       } catch (error) {
         syncStatus = 'Auto-pull failed; using local state.';
@@ -231,6 +233,9 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   PersistedAppState buildState() {
+    final savedAt = _stateSavedAt > 0
+        ? _stateSavedAt
+        : DateTime.now().millisecondsSinceEpoch;
     final persistedSessions = sessions.toList();
     final persistedCurrentId =
         persistedSessions.any((session) => session.id == currentSessionId)
@@ -256,6 +261,7 @@ class AdoetzAppState extends ChangeNotifier {
       geminiApiKey: geminiApiKey,
       endpoints: endpoints,
       agentConnectors: agentConnectors,
+      modelContextOverrides: modelContextOverrides,
       genSettings: genSettings,
       voiceSettings: voiceSettings,
       sessions: persistedSessions,
@@ -263,12 +269,13 @@ class AdoetzAppState extends ChangeNotifier {
       memories: memories,
       tokenUsageData: tokenUsageData,
       customCounters: customCounters,
-      savedAt: DateTime.now().millisecondsSinceEpoch,
+      savedAt: savedAt,
     );
   }
 
   void _applyState(PersistedAppState state, {bool notify = true}) {
     currentUser = state.currentUser;
+    _stateSavedAt = state.savedAt ?? DateTime.now().millisecondsSinceEpoch;
     authToken = state.authToken;
     syncSettings = state.syncSettings;
     language = state.language;
@@ -296,6 +303,7 @@ class AdoetzAppState extends ChangeNotifier {
     memories = state.memories;
     tokenUsageData = state.tokenUsageData;
     customCounters = state.customCounters;
+    modelContextOverrides = state.modelContextOverrides;
     if (notify) notifyListeners();
   }
 
@@ -366,12 +374,19 @@ class AdoetzAppState extends ChangeNotifier {
       geminiApiKey: remoteIsNewer && remote.geminiApiKey.isNotEmpty
           ? remote.geminiApiKey
           : local.geminiApiKey,
-      endpoints: remoteIsNewer && remote.endpoints.isNotEmpty
-          ? remote.endpoints
-          : local.endpoints,
-      agentConnectors: remoteIsNewer
-          ? remote.agentConnectors
-          : local.agentConnectors,
+      endpoints: _mergeEndpointConfigs(
+        local.endpoints,
+        remote.endpoints,
+        preferRemote: remoteIsNewer,
+      ),
+      agentConnectors: _mergeAgentConnectors(
+        local.agentConnectors,
+        remote.agentConnectors,
+        preferRemote: remoteIsNewer,
+      ),
+      modelContextOverrides: remoteIsNewer
+          ? {...local.modelContextOverrides, ...remote.modelContextOverrides}
+          : {...remote.modelContextOverrides, ...local.modelContextOverrides},
       genSettings: remoteIsNewer ? remote.genSettings : local.genSettings,
       voiceSettings: remoteIsNewer ? remote.voiceSettings : local.voiceSettings,
       sessions: mergedSessions,
@@ -390,8 +405,135 @@ class AdoetzAppState extends ChangeNotifier {
       isLiveFrontCamera: remoteIsNewer
           ? remote.isLiveFrontCamera
           : local.isLiveFrontCamera,
-      savedAt: DateTime.now().millisecondsSinceEpoch,
+      savedAt: math.max(local.savedAt ?? 0, remote.savedAt ?? 0),
     );
+  }
+
+  List<EndpointConfig> _mergeEndpointConfigs(
+    List<EndpointConfig> local,
+    List<EndpointConfig> remote, {
+    required bool preferRemote,
+  }) {
+    final merged = <String, EndpointConfig>{};
+    for (final endpoint in local) {
+      merged[_endpointMergeKey(endpoint)] = endpoint;
+    }
+    for (final endpoint in remote) {
+      final key = _endpointMergeKey(endpoint);
+      final existing = merged[key];
+      if (existing == null) {
+        merged[key] = endpoint;
+      } else {
+        merged[key] = _mergeEndpointConfig(
+          existing,
+          endpoint,
+          preferRemote: preferRemote,
+        );
+      }
+    }
+    return merged.values.toList();
+  }
+
+  EndpointConfig _mergeEndpointConfig(
+    EndpointConfig local,
+    EndpointConfig remote, {
+    required bool preferRemote,
+  }) {
+    final primary = preferRemote ? remote : local;
+    final fallback = preferRemote ? local : remote;
+    final models = LinkedHashSetString(
+      preferRemote
+          ? [...remote.models, ...local.models]
+          : [...local.models, ...remote.models],
+    ).toList();
+    return EndpointConfig(
+      id: primary.id.isNotEmpty ? primary.id : fallback.id,
+      url: primary.url.isNotEmpty ? primary.url : fallback.url,
+      key: primary.key.isNotEmpty ? primary.key : fallback.key,
+      name: primary.name.isNotEmpty ? primary.name : fallback.name,
+      skipModelFetch: primary.skipModelFetch,
+      models: models,
+    );
+  }
+
+  String _endpointMergeKey(EndpointConfig endpoint) {
+    if (endpoint.id.trim().isNotEmpty) return 'id:${endpoint.id.trim()}';
+    final name = endpoint.name.trim().toLowerCase();
+    final url = endpoint.url.trim().toLowerCase();
+    return 'endpoint:$name|$url';
+  }
+
+  List<AgentConnector> _mergeAgentConnectors(
+    List<AgentConnector> local,
+    List<AgentConnector> remote, {
+    required bool preferRemote,
+  }) {
+    final merged = <String, AgentConnector>{};
+    for (final connector in local) {
+      merged[_agentConnectorMergeKey(connector)] = connector;
+    }
+    for (final connector in remote) {
+      final key = _agentConnectorMergeKey(connector);
+      final existing = merged[key];
+      if (existing == null) {
+        merged[key] = connector;
+      } else {
+        final remoteWins =
+            connector.updatedAt > existing.updatedAt ||
+            (connector.updatedAt == existing.updatedAt && preferRemote);
+        merged[key] = remoteWins
+            ? connector.copyWith(
+                targets: _mergeConnectorTargets(
+                  existing.targets,
+                  connector.targets,
+                  preferRemote: true,
+                ),
+              )
+            : existing.copyWith(
+                targets: _mergeConnectorTargets(
+                  existing.targets,
+                  connector.targets,
+                  preferRemote: false,
+                ),
+              );
+      }
+    }
+    return merged.values.toList();
+  }
+
+  List<ConnectorTarget> _mergeConnectorTargets(
+    List<ConnectorTarget> local,
+    List<ConnectorTarget> remote, {
+    required bool preferRemote,
+  }) {
+    final merged = <String, ConnectorTarget>{
+      for (final target in local) _connectorTargetMergeKey(target): target,
+    };
+    for (final target in remote) {
+      final key = _connectorTargetMergeKey(target);
+      final existing = merged[key];
+      if (existing == null) {
+        merged[key] = target;
+      } else {
+        final remoteWins =
+            target.updatedAt > existing.updatedAt ||
+            (target.updatedAt == existing.updatedAt && preferRemote);
+        merged[key] = remoteWins ? target : existing;
+      }
+    }
+    return merged.values.toList();
+  }
+
+  String _agentConnectorMergeKey(AgentConnector connector) {
+    if (connector.id.trim().isNotEmpty) return 'id:${connector.id.trim()}';
+    final name = connector.name.trim().toLowerCase();
+    final url = connector.baseUrl.trim().toLowerCase();
+    return 'agent:$name|$url';
+  }
+
+  String _connectorTargetMergeKey(ConnectorTarget target) {
+    if (target.id.trim().isNotEmpty) return 'id:${target.id.trim()}';
+    return 'target:${target.connectorId}|${target.modelId}';
   }
 
   Future<void> authenticate(
@@ -496,6 +638,7 @@ class AdoetzAppState extends ChangeNotifier {
     selectedModel = 'gemini-2.5-flash';
     selectedTargetId = 'model:gemini-2.5-flash';
     agentConnectors = const [];
+    modelContextOverrides = const {};
     isThinkingMode = false;
     isArtifactMode = false;
     lastSyncAt = null;
@@ -576,14 +719,14 @@ class AdoetzAppState extends ChangeNotifier {
     if (isArtifactMode == enabled) return;
     isArtifactMode = enabled;
     notifyListeners();
-    unawaited(_persist());
+    unawaited(_persistAndScheduleRemote());
   }
 
   void setSoundEffectsEnabled(bool enabled) {
     if (soundEffectsEnabled == enabled) return;
     soundEffectsEnabled = enabled;
     notifyListeners();
-    unawaited(_persist());
+    unawaited(_persistAndScheduleRemote());
   }
 
   void setSelectedModel(String model) {
@@ -877,9 +1020,18 @@ class AdoetzAppState extends ChangeNotifier {
               )
               .timeout(const Duration(seconds: 16));
           // If ping succeeds, use existing targets or default to agent name
-          modelsData = connector.targets.isNotEmpty 
-              ? connector.targets.map((t) => {'id': t.modelId, 'context_length': t.contextLength}).toList()
-              : [{'id': connector.name.toLowerCase().replaceAll(' ', '-')}];
+          modelsData = connector.targets.isNotEmpty
+              ? connector.targets
+                    .map(
+                      (t) => {
+                        'id': t.modelId,
+                        'context_length': t.contextLength,
+                      },
+                    )
+                    .toList()
+              : [
+                  {'id': connector.name.toLowerCase().replaceAll(' ', '-')},
+                ];
         } else {
           rethrow;
         }
@@ -1025,7 +1177,7 @@ class AdoetzAppState extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    
+
     final session = Session.empty(null, targetId);
     sessions = [session, ...sessions];
     currentSessionId = session.id;
@@ -1052,7 +1204,7 @@ class AdoetzAppState extends ChangeNotifier {
     }
     currentView = AppView.chat;
     notifyListeners();
-    unawaited(_persist());
+    unawaited(_persist(touchSavedAt: false));
   }
 
   void deleteSession(String id) {
@@ -1127,7 +1279,7 @@ class AdoetzAppState extends ChangeNotifier {
       }
       return item;
     }).toList();
-    
+
     // If we just deleted the current session, switch to a valid one
     final active = activeSessions;
     if (active.isEmpty) {
@@ -1137,7 +1289,7 @@ class AdoetzAppState extends ChangeNotifier {
     } else if (sessions.firstWhere((s) => s.id == currentSessionId).deleted) {
       currentSessionId = active.first.id;
     }
-    
+
     notifyListeners();
     unawaited(_persistAndScheduleRemote());
   }
@@ -1284,6 +1436,7 @@ class AdoetzAppState extends ChangeNotifier {
         selectedModel: modelForRequest,
         endpoints: request.endpoints,
         endpointModels: request.endpointModels,
+        contextLimit: request.contextWindow,
         genSettings: genSettings,
         voiceSettings: voiceSettings,
         geminiApiKey: geminiApiKey,
@@ -1323,6 +1476,8 @@ class AdoetzAppState extends ChangeNotifier {
           inputTokens: response.inputTokens,
           outputTokens: response.outputTokens,
           totalTokens: response.inputTokens + response.outputTokens,
+          cachedInputTokens: response.cachedInputTokens,
+          cacheCreationInputTokens: response.cacheCreationInputTokens,
         ),
       ];
     } catch (error) {
@@ -1545,7 +1700,7 @@ class AdoetzAppState extends ChangeNotifier {
   void toggleLiveCameraFacing() {
     isLiveFrontCamera = !isLiveFrontCamera;
     notifyListeners();
-    unawaited(_persist());
+    unawaited(_persistAndScheduleRemote());
   }
 
   void sendLiveVideoFrame(Uint8List bytes, {String mimeType = 'image/jpeg'}) {
@@ -1644,6 +1799,46 @@ class AdoetzAppState extends ChangeNotifier {
         .join(' ');
   }
 
+  String contextWindowKeyForTarget(ChatTarget target) {
+    if (target.isAgentServer && target.connectorId != null) {
+      return 'agent:${target.connectorId}:${target.modelId ?? target.displayName}';
+    }
+    return 'model:${target.modelId ?? target.displayName}';
+  }
+
+  int? contextWindowOverrideForTarget(ChatTarget target) {
+    return modelContextOverrides[contextWindowKeyForTarget(target)] ??
+        modelContextOverrides[target.id] ??
+        (target.modelId == null
+            ? null
+            : modelContextOverrides['model:${target.modelId}']);
+  }
+
+  int contextWindowForTarget(ChatTarget target) {
+    return contextWindowOverrideForTarget(target) ??
+        target.contextLength ??
+        contextWindow(target.modelId ?? selectedModel);
+  }
+
+  String contextWindowSourceForTarget(ChatTarget target) {
+    if (contextWindowOverrideForTarget(target) != null) return 'Custom';
+    if (target.contextLength != null) return 'Verified from API';
+    return 'Estimated context length';
+  }
+
+  void updateContextWindowOverride(ChatTarget target, int? tokens) {
+    final key = contextWindowKeyForTarget(target);
+    final next = Map<String, int>.from(modelContextOverrides);
+    if (tokens == null || tokens <= 0) {
+      next.remove(key);
+    } else {
+      next[key] = tokens.clamp(1024, 8000000).toInt();
+    }
+    modelContextOverrides = next;
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
   String _modelProviderLabel(String model) {
     final endpointModel = endpointModels
         .where((item) => item.name == model)
@@ -1668,6 +1863,7 @@ class AdoetzAppState extends ChangeNotifier {
         model: model,
         endpoints: endpoints,
         endpointModels: endpointModels,
+        contextWindow: contextWindowForTarget(target),
       );
     }
 
@@ -1679,6 +1875,7 @@ class AdoetzAppState extends ChangeNotifier {
         model: target.modelId ?? target.displayName,
         endpoints: endpoints,
         endpointModels: endpointModels,
+        contextWindow: contextWindowForTarget(target),
         configurationError: 'Agent server is no longer configured.',
       );
     }
@@ -1687,6 +1884,7 @@ class AdoetzAppState extends ChangeNotifier {
         model: target.modelId ?? connector.name,
         endpoints: endpoints,
         endpointModels: endpointModels,
+        contextWindow: contextWindowForTarget(target),
         configurationError: '${connector.name} is disabled.',
       );
     }
@@ -1695,6 +1893,7 @@ class AdoetzAppState extends ChangeNotifier {
         model: target.modelId ?? connector.name,
         endpoints: endpoints,
         endpointModels: endpointModels,
+        contextWindow: contextWindowForTarget(target),
         configurationError: '${connector.name} has no Base URL configured.',
       );
     }
@@ -1711,6 +1910,7 @@ class AdoetzAppState extends ChangeNotifier {
         ...endpointModels,
         EndpointModel(name: model, endpointId: endpoint.id),
       ],
+      contextWindow: contextWindowForTarget(target),
     );
   }
 
@@ -1770,7 +1970,7 @@ class AdoetzAppState extends ChangeNotifier {
   void updateSyncSettings(SyncSettings value) {
     syncSettings = value;
     notifyListeners();
-    unawaited(_persist());
+    unawaited(_persist(touchSavedAt: false));
   }
 
   void updateCustomCounters(List<CustomCounter> value) {
@@ -1850,7 +2050,7 @@ class AdoetzAppState extends ChangeNotifier {
       syncStatus = error.toString().replaceFirst('Exception: ', '');
     }
     notifyListeners();
-    await _persist();
+    await _persist(touchSavedAt: false);
   }
 
   void _replaceSession(String id, Session next) {
@@ -2268,7 +2468,12 @@ class AdoetzAppState extends ChangeNotifier {
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
 
-  Future<void> _persist() async {
+  Future<void> _persist({bool touchSavedAt = true}) async {
+    if (touchSavedAt) {
+      _stateSavedAt = DateTime.now().millisecondsSinceEpoch;
+    } else if (_stateSavedAt == 0) {
+      _stateSavedAt = DateTime.now().millisecondsSinceEpoch;
+    }
     await _storage.save(buildState());
   }
 
@@ -2298,7 +2503,7 @@ class AdoetzAppState extends ChangeNotifier {
         lastSyncAt = DateTime.now().millisecondsSinceEpoch;
         syncStatus = 'Successfully synced to database.';
         notifyListeners();
-        await _persist();
+        await _persist(touchSavedAt: false);
       } catch (error) {
         syncStatus = error.toString().replaceFirst('Exception: ', '');
         notifyListeners();
@@ -2329,11 +2534,13 @@ class _TargetRequestConfig {
     required this.model,
     required this.endpoints,
     required this.endpointModels,
+    required this.contextWindow,
     this.configurationError,
   });
 
   final String model;
   final List<EndpointConfig> endpoints;
   final List<EndpointModel> endpointModels;
+  final int contextWindow;
   final String? configurationError;
 }

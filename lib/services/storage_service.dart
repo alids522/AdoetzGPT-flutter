@@ -63,6 +63,7 @@ class StorageService {
       geminiApiKey: state.geminiApiKey,
       endpoints: state.endpoints,
       agentConnectors: state.agentConnectors,
+      modelContextOverrides: state.modelContextOverrides,
       genSettings: state.genSettings,
       voiceSettings: state.voiceSettings,
       sessions: compactSessions,
@@ -75,7 +76,7 @@ class StorageService {
       soundEffectsEnabled: state.soundEffectsEnabled,
       isLiveVideoEnabled: state.isLiveVideoEnabled,
       isLiveFrontCamera: state.isLiveFrontCamera,
-      savedAt: DateTime.now().millisecondsSinceEpoch,
+      savedAt: state.savedAt,
     );
   }
 

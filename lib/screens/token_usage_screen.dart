@@ -597,7 +597,7 @@ class _ModelUsageBreakdown extends StatelessWidget {
     final p = AppPalette.fromBrightness(
       Theme.of(context).brightness == Brightness.dark,
     );
-    final stats = _modelStats(records);
+    final stats = _endpointModelStats(records);
     return GlassPanel(
       radius: 24,
       child: Column(
@@ -624,7 +624,27 @@ class _ModelUsageBreakdown extends StatelessWidget {
           if (stats.isEmpty)
             Text('No model usage in this filter.', style: _mutedStyle(p))
           else
-            ...stats.map((item) => _ModelUsageRow(stat: item)),
+            ...stats.map(
+              (epStat) => Padding(
+                padding: const EdgeInsets.only(bottom: 16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      epStat.endpoint.toUpperCase(),
+                      style: TextStyle(
+                        color: p.primary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    ...epStat.models.map((item) => _ModelUsageRow(stat: item)),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -664,12 +684,12 @@ class _ModelUsageRow extends StatelessWidget {
             children: [
               _UsageMetric(label: 'Input', value: stat.input),
               _UsageMetric(label: 'Output', value: stat.output),
-              _UsageMetric(
-                label: 'Total',
-                value: stat.total,
-                strong: true,
-              ),
+              _UsageMetric(label: 'Total', value: stat.total, strong: true),
               _UsageMetric(label: 'Count', value: stat.count),
+              if (stat.cachedInput > 0)
+                _UsageMetric(label: 'Cache Hit', value: stat.cachedInput),
+              if (stat.cacheCreation > 0)
+                _UsageMetric(label: 'Cache Write', value: stat.cacheCreation),
             ],
           ),
         ],
@@ -851,12 +871,57 @@ class _CustomCounters extends StatelessWidget {
                           ),
                         ],
                       ),
+                      if (stats.cachedInput > 0 || stats.cacheCreation > 0) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            if (stats.cachedInput > 0)
+                              Expanded(
+                                child: _MiniStat(
+                                  label: 'Cache Hit',
+                                  value: stats.cachedInput,
+                                  color: const Color(0xff22c55e),
+                                ),
+                              ),
+                            if (stats.cachedInput > 0 &&
+                                stats.cacheCreation > 0)
+                              const SizedBox(width: 8),
+                            if (stats.cacheCreation > 0)
+                              Expanded(
+                                child: _MiniStat(
+                                  label: 'Cache Write',
+                                  value: stats.cacheCreation,
+                                  color: const Color(0xfff59e0b),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
                       if (modelStats.isNotEmpty) ...[
                         const SizedBox(height: 12),
-                        Text('MODELS', style: _labelStyle(context)),
+                        Text('MODELS BY ENDPOINT', style: _labelStyle(context)),
                         const SizedBox(height: 4),
                         ...modelStats.map(
-                          (stat) => _ModelUsageRow(stat: stat, compact: true),
+                          (epStat) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  epStat.endpoint,
+                                  style: TextStyle(
+                                    color: _color(counter.color),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                ...epStat.models.map(
+                                  (stat) =>
+                                      _ModelUsageRow(stat: stat, compact: true),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ],
                     ],
@@ -881,13 +946,15 @@ class _CustomCounters extends StatelessWidget {
       stats.total += item.totalTokens;
       stats.input += item.inputTokens;
       stats.output += item.outputTokens;
+      stats.cachedInput += item.cachedInputTokens;
+      stats.cacheCreation += item.cacheCreationInputTokens;
       stats.count += 1;
     }
     return stats;
   }
 
-  List<_ModelUsageStat> _counterModelStats(CustomCounter counter) {
-    return _modelStats(
+  List<_EndpointUsageStat> _counterModelStats(CustomCounter counter) {
+    return _endpointModelStats(
       filteredAll.where(
         (item) =>
             item.timestamp >= counter.createdAt &&
@@ -1068,7 +1135,16 @@ class _CounterStats {
   int total = 0;
   int input = 0;
   int output = 0;
+  int cachedInput = 0;
+  int cacheCreation = 0;
   int count = 0;
+}
+
+class _EndpointUsageStat {
+  _EndpointUsageStat(this.endpoint);
+  final String endpoint;
+  int total = 0;
+  final List<_ModelUsageStat> models = [];
 }
 
 class _ModelUsageStat {
@@ -1078,21 +1154,53 @@ class _ModelUsageStat {
   int input = 0;
   int output = 0;
   int total = 0;
+  int cachedInput = 0;
+  int cacheCreation = 0;
   int count = 0;
 }
 
-List<_ModelUsageStat> _modelStats(Iterable<TokenUsageRecord> records) {
-  final map = <String, _ModelUsageStat>{};
+List<_EndpointUsageStat> _endpointModelStats(
+  Iterable<TokenUsageRecord> records,
+) {
+  final endpointMap = <String, _EndpointUsageStat>{};
+
   for (final record in records) {
-    final key = record.model.trim().isEmpty ? 'Unknown model' : record.model;
-    final stat = map.putIfAbsent(key, () => _ModelUsageStat(key));
-    stat.input += record.inputTokens;
-    stat.output += record.outputTokens;
-    stat.total += record.totalTokens;
-    stat.count += 1;
+    final epKey = record.endpoint.trim().isEmpty
+        ? 'Unknown endpoint'
+        : record.endpoint;
+    final modelKey = record.model.trim().isEmpty
+        ? 'Unknown model'
+        : record.model;
+
+    final epStat = endpointMap.putIfAbsent(
+      epKey,
+      () => _EndpointUsageStat(epKey),
+    );
+    epStat.total += record.totalTokens;
+
+    var modelStat = epStat.models.firstWhere(
+      (m) => m.model == modelKey,
+      orElse: () {
+        final newModel = _ModelUsageStat(modelKey);
+        epStat.models.add(newModel);
+        return newModel;
+      },
+    );
+
+    modelStat.input += record.inputTokens;
+    modelStat.output += record.outputTokens;
+    modelStat.total += record.totalTokens;
+    modelStat.cachedInput += record.cachedInputTokens;
+    modelStat.cacheCreation += record.cacheCreationInputTokens;
+    modelStat.count += 1;
   }
-  final result = map.values.toList()
+
+  final result = endpointMap.values.toList()
     ..sort((a, b) => b.total.compareTo(a.total));
+
+  for (final ep in result) {
+    ep.models.sort((a, b) => b.total.compareTo(a.total));
+  }
   return result;
 }
 
