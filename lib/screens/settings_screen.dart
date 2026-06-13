@@ -1248,21 +1248,46 @@ class _ModelCostsSectionState extends State<_ModelCostsSection> {
                   children: [
                     Text('ADD MODEL', style: _labelStyle(context)),
                     const SizedBox(height: 7),
-                    DropdownMenu<String>(
-                      initialSelection: _newModelName.isEmpty ? null : _newModelName,
-                      hintText: 'Select model...',
-                      enableSearch: true,
-                      enableFilter: true,
-                      expandedInsets: EdgeInsets.zero,
-                      dropdownMenuEntries: app.models
-                          .where((m) => !configuredModels.contains(m))
-                          .map((item) => DropdownMenuEntry(value: item, label: item))
-                          .toList(),
-                      onSelected: (value) {
-                        if (value != null) {
-                          setState(() => _newModelName = value);
+                    InkWell(
+                      onTap: () async {
+                        final models = app.models
+                            .where((m) => !configuredModels.contains(m))
+                            .toList();
+                        final result = await showDialog<String>(
+                          context: context,
+                          builder: (context) => _SettingsModelPicker(models: models),
+                        );
+                        if (result != null) {
+                          setState(() => _newModelName = result);
                         }
                       },
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: p.outline),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _newModelName.isEmpty ? 'Select model...' : _newModelName,
+                                style: TextStyle(
+                                  color: _newModelName.isEmpty
+                                      ? p.onSurfaceVariant
+                                      : p.onSurface,
+                                  fontSize: 14,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Icon(LucideIcons.chevronDown, size: 16, color: p.onSurfaceVariant),
+                          ],
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -1285,6 +1310,126 @@ class _ModelCostsSectionState extends State<_ModelCostsSection> {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SettingsModelPicker extends StatefulWidget {
+  const _SettingsModelPicker({required this.models});
+  final List<String> models;
+
+  @override
+  State<_SettingsModelPicker> createState() => _SettingsModelPickerState();
+}
+
+class _SettingsModelPickerState extends State<_SettingsModelPicker> {
+  String query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    final normalized = query.toLowerCase();
+    final filtered = widget.models
+        .where((m) => m.toLowerCase().contains(normalized))
+        .toList();
+
+    return Center(
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          width: 330,
+          constraints: const BoxConstraints(maxHeight: 400),
+          decoration: BoxDecoration(
+            color: p.isDark ? const Color(0xff111111) : Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: p.outline),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: p.isDark ? 0.38 : 0.16),
+                blurRadius: 28,
+                offset: const Offset(0, 18),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 8, 10),
+                child: Row(
+                  children: [
+                    Icon(LucideIcons.bot, size: 16, color: p.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Select Model',
+                        style: TextStyle(
+                          color: p.onSurface,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(LucideIcons.x, size: 16),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                child: TextField(
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(LucideIcons.search, size: 16),
+                    hintText: 'Search models...',
+                    isDense: true,
+                  ),
+                  onChanged: (value) => setState(() => query = value),
+                ),
+              ),
+              Flexible(
+                child: filtered.isEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+                        child: Text(
+                          'No models match your search.',
+                          style: TextStyle(
+                            color: p.onSurfaceVariant,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
+                        itemCount: filtered.length,
+                        itemBuilder: (context, index) {
+                          final m = filtered[index];
+                          return ListTile(
+                            dense: true,
+                            title: Text(
+                              m,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            onTap: () => Navigator.pop(context, m),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
