@@ -280,9 +280,7 @@ class AiService {
     required TextDelta onText,
     required StatusCallback onStatus,
   }) async {
-    final modelName = selectedModel.trim().isEmpty
-        ? 'gemini-2.5-flash'
-        : selectedModel.trim();
+    final modelName = selectedModel.trim();
     final endpointModel = _resolveEndpointModel(
       modelName,
       endpoints,
@@ -361,9 +359,12 @@ class AiService {
     required String geminiApiKey,
     required SyncSettings syncSettings,
   }) async {
-    final modelName = selectedModel.trim().isEmpty
-        ? 'gemini-2.5-flash'
-        : selectedModel.trim();
+    final modelName = selectedModel.trim();
+    if (modelName.isEmpty) {
+      return _fallbackTitleFromMessages(
+        messages.where((m) => m.text.trim().isNotEmpty).take(2).toList(),
+      );
+    }
 
     final titleMessages = messages
         .where((message) => message.text.trim().isNotEmpty)
@@ -390,13 +391,18 @@ Generate a concise, 3-5 word title with an emoji summarizing the chat history.
 - Use emojis that enhance understanding of the topic, but avoid quotation marks or special formatting.
 - Write the title in the chat's primary language; default to English if multilingual.
 - Prioritize accuracy over excessive creativity; keep it clear and simple.
-- Correct obvious typos from the user's message when they affect the title.
-- Do not copy the first user message verbatim or only change capitalization.
-- If the first exchange is just a greeting, title the exchange as a greeting, not the raw typo.
 - Your entire response must consist solely of the JSON object, without any introductory or concluding text.
 - The output must be a single, raw JSON object, without any markdown code fences or other encapsulating text.
+- Ensure no conversational text, affirmations, or explanations precede or follow the raw JSON output, as this will cause direct parsing failure.
 ### Output:
 JSON format: { "title": "your concise title here" }
+### Examples:
+- { "title": "📉 Stock Market Trends" },
+- { "title": "🍪 Perfect Chocolate Chip Recipe" },
+- { "title": "Evolution of Music Streaming" },
+- { "title": "Remote Work Productivity Tips" },
+- { "title": "Artificial Intelligence in Healthcare" },
+- { "title": "🎮 Video Game Development Insights" }
 ### Chat History:
 <chat_history>
 $chatHistory
@@ -836,7 +842,7 @@ $chatHistory
             ],
             'stream': false,
             'temperature': 0.2,
-            'max_tokens': 48,
+            'max_tokens': 1000,
           });
 
     final streamed = await _sendWithProxyFallback(request, syncSettings);
@@ -887,7 +893,7 @@ $chatHistory
                 ],
               },
             ],
-            'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 24},
+            'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 800},
           }),
         )
         .timeout(const Duration(seconds: 18));
@@ -904,24 +910,42 @@ $chatHistory
     String fallbackSource = '',
     String fallbackTitle = '',
   }) {
+    // Strip thinking blocks from models like DeepSeek, Qwen, etc.
+    var processedValue = value
+        .replaceAll(
+          RegExp(r'<think>[\s\S]*?</think>', caseSensitive: false),
+          '',
+        )
+        .trim();
+    if (processedValue.isEmpty) processedValue = value;
+
     final fallback = fallbackTitle.trim().isNotEmpty
         ? fallbackTitle.trim()
         : _fallbackTitleFromMessage(fallbackSource);
 
     // First try robust JSON parsing (OpenWebUI style)
-    final sanitized = value
+    final sanitized = processedValue
         .replaceAll('\u2018', '"')
         .replaceAll('\u2019', '"')
         .replaceAll('\u201c', '"')
-        .replaceAll('\u201d', '"')
-        .replaceAll('`', '"');
-    final start = sanitized.indexOf('{');
-    final end = sanitized.lastIndexOf('}') + 1;
+        .replaceAll('\u201d', '"');
+
+    var jsonText = '';
+    // Look for a JSON block wrapped in markdown, otherwise fallback to finding brackets
+    final blockMatch = RegExp(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', caseSensitive: false).firstMatch(sanitized);
+    if (blockMatch != null) {
+      jsonText = blockMatch.group(1)!;
+    } else {
+      final start = sanitized.indexOf('{');
+      final end = sanitized.lastIndexOf('}') + 1;
+      if (start != -1 && end > start) {
+        jsonText = sanitized.substring(start, end);
+      }
+    }
 
     var cleaned = '';
-    if (start != -1 && end > start) {
+    if (jsonText.isNotEmpty) {
       try {
-        final jsonText = sanitized.substring(start, end);
         final parsed = jsonDecode(jsonText);
         if (parsed is Map && parsed.containsKey('title')) {
           cleaned = stringValue(parsed['title']);
@@ -950,7 +974,8 @@ $chatHistory
     final normalizedCleaned = _normalizedTitle(cleaned);
     final normalizedSource = _normalizedTitle(fallbackSource);
     if (normalizedCleaned == normalizedSource ||
-        normalizedSource.startsWith(normalizedCleaned)) {
+        normalizedSource.startsWith(normalizedCleaned) ||
+        normalizedCleaned.startsWith(normalizedSource)) {
       return fallback;
     }
 

@@ -2007,16 +2007,7 @@ class _InputPod extends StatelessWidget {
     final contextSource = app.contextWindowSourceForTarget(target);
     final isHardcoded = contextSource == 'Estimated context length';
     final isCustom = contextSource == 'Custom';
-    final liveTokens = historyTokens + countTokens(input.text);
     final compact = MediaQuery.of(context).size.width < 560;
-    final contextRatio = (liveTokens / contextMax).clamp(0.0, 1.0).toDouble();
-    final contextColor =
-        Color.lerp(
-          p.isDark ? Colors.white : const Color(0xff475569),
-          p.error,
-          math.pow(contextRatio, 1.35).toDouble(),
-        ) ??
-        p.error;
     final inner = Column(
       children: [
         Padding(
@@ -2057,8 +2048,20 @@ class _InputPod extends StatelessWidget {
                 onPressed: app.toggleArtifactMode,
               ),
               const SizedBox(width: 12),
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
+              AnimatedBuilder(
+                animation: input,
+                builder: (context, _) {
+                  final liveTokens = historyTokens + countTokens(input.text);
+                  final contextRatio = (liveTokens / contextMax).clamp(0.0, 1.0).toDouble();
+                  final contextColor =
+                      Color.lerp(
+                        p.isDark ? Colors.white : const Color(0xff475569),
+                        p.error,
+                        math.pow(contextRatio, 1.35).toDouble(),
+                      ) ??
+                      p.error;
+                  return GestureDetector(
+                    behavior: HitTestBehavior.opaque,
                 onTap: () =>
                     _showContextWindowEditor(context, app, target, contextMax),
                 onLongPress: () =>
@@ -2132,6 +2135,8 @@ class _InputPod extends StatelessWidget {
                     ],
                   ),
                 ),
+              );
+                },
               ),
             ],
           ),

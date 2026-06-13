@@ -1476,7 +1476,9 @@ class AdoetzAppState extends ChangeNotifier {
         unawaited(
           _generateSessionTitle(
             sessionId: session.id,
-            model: target.isModel ? modelForRequest : selectedModel,
+            model: genSettings.titleModelEnabled && genSettings.titleModel.trim().isNotEmpty
+                ? genSettings.titleModel.trim()
+                : (target.isModel ? modelForRequest : selectedModel),
           ),
         );
       }
