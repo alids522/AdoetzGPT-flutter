@@ -354,7 +354,7 @@ class AiService {
   }
 
   Future<String> generateTitle({
-    required String message,
+    required List<Message> messages,
     required String selectedModel,
     required List<EndpointConfig> endpoints,
     required List<EndpointModel> endpointModels,
@@ -364,12 +364,44 @@ class AiService {
     final modelName = selectedModel.trim().isEmpty
         ? 'gemini-2.5-flash'
         : selectedModel.trim();
+
+    final titleMessages = messages
+        .where((message) => message.text.trim().isNotEmpty)
+        .take(2)
+        .toList();
+    final chatHistory = titleMessages
+        .map(
+          (m) =>
+              '${m.isUser ? "User" : "Assistant"}: ${_cleanTitleMessageText(m.text)}',
+        )
+        .join('\n');
+    final fallbackMessage = titleMessages
+        .where((m) => m.isUser)
+        .map((m) => m.text)
+        .firstOrNull;
+    final fallbackTitle = _fallbackTitleFromMessages(titleMessages);
+
     final titlePrompt =
-        'Create a short title (maximum 3 to 4 words) for the following message.\n'
-        'Output ONLY the title. Do not use quotation marks, punctuation, or any introductory text.\n'
-        'Do not copy the message verbatim. Rephrase it as a topic.\n'
-        'Example: who are you -> Who Am I\n\n'
-        '$message';
+        '''
+### Task:
+Generate a concise, 3-5 word title with an emoji summarizing the chat history.
+### Guidelines:
+- The title should clearly represent the main theme or subject of the conversation.
+- Use emojis that enhance understanding of the topic, but avoid quotation marks or special formatting.
+- Write the title in the chat's primary language; default to English if multilingual.
+- Prioritize accuracy over excessive creativity; keep it clear and simple.
+- Correct obvious typos from the user's message when they affect the title.
+- Do not copy the first user message verbatim or only change capitalization.
+- If the first exchange is just a greeting, title the exchange as a greeting, not the raw typo.
+- Your entire response must consist solely of the JSON object, without any introductory or concluding text.
+- The output must be a single, raw JSON object, without any markdown code fences or other encapsulating text.
+### Output:
+JSON format: { "title": "your concise title here" }
+### Chat History:
+<chat_history>
+$chatHistory
+</chat_history>''';
+
     final endpointModel = _resolveEndpointModel(
       modelName,
       endpoints,
@@ -393,7 +425,8 @@ class AiService {
             endpoint: endpoint,
             syncSettings: syncSettings,
           ),
-          fallbackSource: message,
+          fallbackSource: fallbackMessage ?? '',
+          fallbackTitle: fallbackTitle,
         );
       }
       return _sanitizeTitle(
@@ -402,10 +435,11 @@ class AiService {
           selectedModel: modelName,
           geminiApiKey: geminiApiKey,
         ),
-        fallbackSource: message,
+        fallbackSource: fallbackMessage ?? '',
+        fallbackTitle: fallbackTitle,
       );
     } catch (_) {
-      return _fallbackTitleFromMessage(message);
+      return fallbackTitle;
     }
   }
 
@@ -798,16 +832,11 @@ class AiService {
           ..body = jsonEncode({
             'model': selectedModel,
             'messages': [
-              {
-                'role': 'system',
-                'content':
-                    'You create concise 3 to 4 word chat titles. Reply with only the title. Never copy the user message verbatim. If the user asks "who are you", title it "Who Am I".',
-              },
               {'role': 'user', 'content': prompt},
             ],
             'stream': false,
             'temperature': 0.2,
-            'max_tokens': 24,
+            'max_tokens': 48,
           });
 
     final streamed = await _sendWithProxyFallback(request, syncSettings);
@@ -870,21 +899,52 @@ class AiService {
     return _geminiText(jsonDecode(response.body));
   }
 
-  String _sanitizeTitle(String value, {String fallbackSource = ''}) {
-    final fallback = _fallbackTitleFromMessage(fallbackSource);
-    var cleaned = value
-        .replaceAll(RegExp(r'^title:\s*', caseSensitive: false), '')
-        .replaceAll(
-          RegExp(
-            r'^(?:input\s+message|user\s+message|message|conversation|prompt)\s*[:\-]?\s*',
-            caseSensitive: false,
-          ),
-          '',
-        )
-        .replaceAll(RegExp(r'''["'`_*#\[\]()]'''), '')
-        .replaceAll(RegExp(r'[^\w\s-]'), ' ')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+  String _sanitizeTitle(
+    String value, {
+    String fallbackSource = '',
+    String fallbackTitle = '',
+  }) {
+    final fallback = fallbackTitle.trim().isNotEmpty
+        ? fallbackTitle.trim()
+        : _fallbackTitleFromMessage(fallbackSource);
+
+    // First try robust JSON parsing (OpenWebUI style)
+    final sanitized = value
+        .replaceAll('\u2018', '"')
+        .replaceAll('\u2019', '"')
+        .replaceAll('\u201c', '"')
+        .replaceAll('\u201d', '"')
+        .replaceAll('`', '"');
+    final start = sanitized.indexOf('{');
+    final end = sanitized.lastIndexOf('}') + 1;
+
+    var cleaned = '';
+    if (start != -1 && end > start) {
+      try {
+        final jsonText = sanitized.substring(start, end);
+        final parsed = jsonDecode(jsonText);
+        if (parsed is Map && parsed.containsKey('title')) {
+          cleaned = stringValue(parsed['title']);
+        }
+      } catch (_) {}
+    }
+
+    // If JSON parsing fails or returns empty, fallback to legacy cleaning on the raw string
+    if (cleaned.isEmpty) {
+      cleaned = value
+          .replaceAll(RegExp(r'^title:\s*', caseSensitive: false), '')
+          .replaceAll(
+            RegExp(
+              r'^(?:input\s+message|user\s+message|message|conversation|prompt)\s*[:\-]?\s*',
+              caseSensitive: false,
+            ),
+            '',
+          )
+          .replaceAll(RegExp(r'''["'`_*#\[\]()]'''), '')
+          .replaceAll(RegExp(r'\n+'), ' ')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+    }
 
     if (cleaned.isEmpty) return fallback;
     final normalizedCleaned = _normalizedTitle(cleaned);
@@ -894,9 +954,34 @@ class AiService {
       return fallback;
     }
 
-    cleaned = cleaned.split(RegExp(r'\s+')).take(4).join(' ');
+    cleaned = cleaned.split(RegExp(r'\s+')).take(5).join(' ');
     final titled = _titleCase(cleaned);
     return titled.length > 42 ? titled.substring(0, 42).trim() : titled;
+  }
+
+  String _fallbackTitleFromMessages(List<Message> messages) {
+    final firstUser = messages.where((m) => m.isUser).firstOrNull;
+    if (firstUser == null) return 'New Chat';
+    final assistant = messages
+        .where((m) => !m.isUser && !m.isSystem)
+        .firstOrNull;
+    final userText = firstUser.text.trim();
+    final assistantText = assistant?.text.trim() ?? '';
+    final normalizedUser = _normalizedTitle(userText);
+    final normalizedAssistant = _normalizedTitle(assistantText);
+    final mentionedModel = _modelMentionFromText(userText);
+
+    if (_looksLikeGreeting(normalizedUser)) {
+      if (mentionedModel.isNotEmpty) return '$mentionedModel Greeting';
+      if (normalizedAssistant.contains('how can i help') ||
+          normalizedAssistant.contains('how may i help') ||
+          normalizedAssistant.contains('can i help')) {
+        return 'Assistant Greeting';
+      }
+      return 'Greeting Exchange';
+    }
+
+    return _fallbackTitleFromMessage(userText);
   }
 
   String _fallbackTitleFromMessage(String value) {
@@ -927,6 +1012,55 @@ class AiService {
 
     final words = cleaned.split(RegExp(r'\s+')).take(4).join(' ');
     return _titleCase(words);
+  }
+
+  String _cleanTitleMessageText(String value) {
+    return value
+        .replaceAll(
+          RegExp(r'<think>[\s\S]*?</think>', caseSensitive: false),
+          '',
+        )
+        .replaceAll(
+          RegExp(r'<details[\s\S]*?</details>', caseSensitive: false),
+          '',
+        )
+        .replaceAll(RegExp(r'!\[[^\]]*\]\([^)]+\)'), '')
+        .replaceAll('\u0000', '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  bool _looksLikeGreeting(String normalized) {
+    final words = normalized.split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+    if (words.isEmpty || words.length > 4) return false;
+    return words.any((word) {
+      final clean = word.replaceAll('-', '');
+      return const {
+        'hi',
+        'hey',
+        'hello',
+        'helo',
+        'hllo',
+        'helllo',
+        'hwllo',
+        'halo',
+        'hai',
+        'yo',
+      }.contains(clean);
+    });
+  }
+
+  String _modelMentionFromText(String value) {
+    final normalized = _normalizedTitle(value);
+    if (RegExp(r'\bdeep\s*seek\b|\bdeepseek\b').hasMatch(normalized)) {
+      return 'DeepSeek';
+    }
+    if (RegExp(r'\bgemini\b').hasMatch(normalized)) return 'Gemini';
+    if (RegExp(r'\bgemma\b').hasMatch(normalized)) return 'Gemma';
+    if (RegExp(r'\bmistral\b').hasMatch(normalized)) return 'Mistral';
+    if (RegExp(r'\bgpt\b|\bchatgpt\b').hasMatch(normalized)) return 'GPT';
+    if (RegExp(r'\bclaude\b').hasMatch(normalized)) return 'Claude';
+    return '';
   }
 
   String _extractTitleTopic(String value) {
@@ -997,11 +1131,15 @@ class AiService {
 
   String _titleWord(String word, {required bool keepLowercase}) {
     final lower = word.toLowerCase();
+    if (!RegExp(r'[a-z0-9]', caseSensitive: false).hasMatch(word)) {
+      return word;
+    }
     if (keepLowercase) return lower;
     if (lower == 'ai') return 'AI';
     if (lower == 'gpt') return 'GPT';
     if (lower == 'html') return 'HTML';
     if (lower == 'api') return 'API';
+    if (lower == 'deepseek') return 'DeepSeek';
     if (lower == 'i') return 'I';
     return lower.substring(0, 1).toUpperCase() + lower.substring(1);
   }
@@ -1396,6 +1534,11 @@ class AiService {
         .cast<EndpointModel?>()
         .firstOrNull;
     if (direct != null) return direct;
+    for (final endpoint in endpoints) {
+      if (endpoint.models.any((model) => model == modelName)) {
+        return EndpointModel(name: modelName, endpointId: endpoint.id);
+      }
+    }
     final nonGeminiHint =
         modelName.contains('/') ||
         [

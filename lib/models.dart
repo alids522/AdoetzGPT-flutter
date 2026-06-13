@@ -983,6 +983,8 @@ class GenerationSettings {
     this.googleSearchCx = '',
     this.tavilyApiKey = '',
     this.hapticStreamingEnabled = false,
+    this.titleModelEnabled = false,
+    this.titleModel = '',
   });
 
   final String imageModel;
@@ -997,6 +999,8 @@ class GenerationSettings {
   final String googleSearchCx;
   final String tavilyApiKey;
   final bool hapticStreamingEnabled;
+  final bool titleModelEnabled;
+  final String titleModel;
 
   GenerationSettings copyWith({
     String? imageModel,
@@ -1011,6 +1015,8 @@ class GenerationSettings {
     String? googleSearchCx,
     String? tavilyApiKey,
     bool? hapticStreamingEnabled,
+    bool? titleModelEnabled,
+    String? titleModel,
   }) {
     final nextEngine = webSearchEngine ?? this.webSearchEngine;
     return GenerationSettings(
@@ -1029,6 +1035,8 @@ class GenerationSettings {
       tavilyApiKey: tavilyApiKey ?? this.tavilyApiKey,
       hapticStreamingEnabled:
           hapticStreamingEnabled ?? this.hapticStreamingEnabled,
+      titleModelEnabled: titleModelEnabled ?? this.titleModelEnabled,
+      titleModel: titleModel ?? this.titleModel,
     );
   }
 
@@ -1056,6 +1064,8 @@ class GenerationSettings {
       googleSearchCx: stringValue(json['googleSearchCx']),
       tavilyApiKey: stringValue(json['tavilyApiKey']),
       hapticStreamingEnabled: boolValue(json['hapticStreamingEnabled']),
+      titleModelEnabled: boolValue(json['titleModelEnabled']),
+      titleModel: stringValue(json['titleModel']),
     );
   }
 
@@ -1072,6 +1082,8 @@ class GenerationSettings {
     'googleSearchCx': googleSearchCx,
     'tavilyApiKey': tavilyApiKey,
     'hapticStreamingEnabled': hapticStreamingEnabled,
+    'titleModelEnabled': titleModelEnabled,
+    'titleModel': titleModel,
   };
 }
 

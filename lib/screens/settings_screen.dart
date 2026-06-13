@@ -79,6 +79,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 22),
               const _MemorySection(),
               const SizedBox(height: 22),
+              const _TitleGenerationSection(),
+              const SizedBox(height: 22),
               _SyncSection(
                 guestUser: guestUser,
                 guestPass: guestPass,
@@ -427,6 +429,77 @@ class _ThemeOptionTileState extends State<_ThemeOptionTile> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _TitleGenerationSection extends StatelessWidget {
+  const _TitleGenerationSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    final settings = app.genSettings;
+    final fallbackModel = app.models.contains(app.selectedModel)
+        ? app.selectedModel
+        : (app.models.isNotEmpty ? app.models.first : app.selectedModel);
+    final selectedTitleModel = settings.titleModel.trim().isNotEmpty
+        ? settings.titleModel.trim()
+        : fallbackModel;
+    final modelValues = {
+      if (selectedTitleModel.trim().isNotEmpty) selectedTitleModel,
+      if (app.selectedModel.trim().isNotEmpty) app.selectedModel,
+      ...app.models.where((model) => model.trim().isNotEmpty),
+    }.toList();
+
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SectionHeader(
+            icon: LucideIcons.panelTop,
+            title: 'Title Generation',
+            accent: Color(0xff22c55e),
+          ),
+          const SizedBox(height: 12),
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            value: settings.titleModelEnabled,
+            onChanged: (value) {
+              app.updateGenerationSettings(
+                settings.copyWith(
+                  titleModelEnabled: value,
+                  titleModel: settings.titleModel.trim().isNotEmpty
+                      ? settings.titleModel
+                      : selectedTitleModel,
+                ),
+              );
+            },
+            title: const Text('Use dedicated title model'),
+            subtitle: Text(
+              settings.titleModelEnabled
+                  ? 'Session titles use ${app.formatTargetName(selectedTitleModel)}.'
+                  : 'Session titles use the same model as the active chat.',
+              style: TextStyle(color: p.onSurfaceVariant, fontSize: 12),
+            ),
+          ),
+          if (settings.titleModelEnabled) ...[
+            const SizedBox(height: 12),
+            _DropdownSetting(
+              label: 'Title Model',
+              value: selectedTitleModel,
+              values: modelValues,
+              onChanged: (value) => app.updateGenerationSettings(
+                settings.copyWith(titleModel: value),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -1777,7 +1850,8 @@ class _SettingFieldState extends State<_SettingField> {
         _controller.text != widget.initialValue) {
       final currentSelection = _controller.selection;
       _controller.text = widget.initialValue;
-      if (currentSelection.isValid && currentSelection.baseOffset <= widget.initialValue.length) {
+      if (currentSelection.isValid &&
+          currentSelection.baseOffset <= widget.initialValue.length) {
         _controller.selection = currentSelection;
       }
     }
@@ -1808,7 +1882,6 @@ class _SettingFieldState extends State<_SettingField> {
     );
   }
 }
-
 
 class _DropdownSetting extends StatelessWidget {
   const _DropdownSetting({

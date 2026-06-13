@@ -1415,15 +1415,6 @@ class AdoetzAppState extends ChangeNotifier {
     syncStatus = '';
     _maybeSaveUserMemory(prompt);
     notifyListeners();
-    if (isFirstMessage) {
-      unawaited(
-        _generateSessionTitle(
-          sessionId: session.id,
-          message: prompt.trim(),
-          model: target.isModel ? modelForRequest : selectedModel,
-        ),
-      );
-    }
 
     try {
       if (request.configurationError != null) {
@@ -1480,6 +1471,15 @@ class AdoetzAppState extends ChangeNotifier {
           cacheCreationInputTokens: response.cacheCreationInputTokens,
         ),
       ];
+
+      if (isFirstMessage && !_generationStopRequested) {
+        unawaited(
+          _generateSessionTitle(
+            sessionId: session.id,
+            model: target.isModel ? modelForRequest : selectedModel,
+          ),
+        );
+      }
     } catch (error) {
       if (_activeGenerationId != generationId || _generationStopRequested) {
         return;
@@ -2209,13 +2209,12 @@ class AdoetzAppState extends ChangeNotifier {
         finished &&
         session.messages.where((m) => m.isUser).length <= 1;
     if (finishedFirstUserSpeech) {
-      unawaited(
-        _generateSessionTitle(
-          sessionId: session.id,
-          message: clean,
-          model: model,
-        ),
-      );
+      // For live mode, we just wait until the session has at least 2 messages
+      // to generate the title properly with context. If it's a fast response, it might be caught here.
+      // Otherwise, the general text chat flow handles it. Live mode will eventually trigger this.
+      if (session.messages.length >= 2) {
+        unawaited(_generateSessionTitle(sessionId: session.id, model: model));
+      }
     }
   }
 
@@ -2274,36 +2273,46 @@ class AdoetzAppState extends ChangeNotifier {
 
   Future<void> _generateSessionTitle({
     required String sessionId,
-    required String message,
     required String model,
   }) async {
-    if (message.trim().isEmpty) return;
+    final session = sessions.where((item) => item.id == sessionId).firstOrNull;
+    if (session == null || session.messages.isEmpty) return;
+
+    final history = session.messages.take(2).toList();
+    if (history.isEmpty) return;
+    final titleModel =
+        genSettings.titleModelEnabled &&
+            genSettings.titleModel.trim().isNotEmpty
+        ? genSettings.titleModel.trim()
+        : model;
+
     try {
       final generated = await _ai.generateTitle(
-        message: message,
-        selectedModel: model,
+        messages: history,
+        selectedModel: titleModel,
         endpoints: endpoints,
         endpointModels: endpointModels,
         geminiApiKey: geminiApiKey,
         syncSettings: syncSettings,
       );
-      final title = cleanTitle(
-        generated,
-      ).split(RegExp(r'\s+')).take(4).join(' ');
+
+      final title = cleanTitle(generated);
       if (title.trim().isEmpty) return;
-      final session = sessions
+
+      final currentSession = sessions
           .where((item) => item.id == sessionId)
           .firstOrNull;
-      if (session == null || session.messages.isEmpty) return;
+      if (currentSession == null || currentSession.messages.isEmpty) return;
+
       _replaceSession(
         sessionId,
-        session.copyWith(
-          title: title.trim(),
+        currentSession.copyWith(
+          title: title,
           updatedAt: DateTime.now().millisecondsSinceEpoch,
         ),
       );
+      _persistAndScheduleRemote();
       notifyListeners();
-      unawaited(_persistAndScheduleRemote());
     } catch (_) {}
   }
 
