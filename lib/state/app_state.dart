@@ -1260,12 +1260,23 @@ class AdoetzAppState extends ChangeNotifier {
 
   void clearAllSessions() {
     final now = DateTime.now().millisecondsSinceEpoch;
-    final session = Session.empty(null, activeChatTarget.id);
-    sessions = [
-      ...sessions.map((item) => item.copyWith(deleted: true, updatedAt: now)),
-      session,
-    ];
-    currentSessionId = session.id;
+    sessions = sessions.map((item) {
+      if (!item.currentTargetId.startsWith('agent:')) {
+        return item.copyWith(deleted: true, updatedAt: now);
+      }
+      return item;
+    }).toList();
+
+    // If we just deleted the current session, switch to a valid one
+    final active = activeSessions;
+    if (active.isEmpty) {
+      final session = Session.empty(null, 'model:$selectedModel');
+      sessions = [...sessions, session];
+      currentSessionId = session.id;
+    } else if (sessions.firstWhere((s) => s.id == currentSessionId).deleted) {
+      currentSessionId = active.first.id;
+    }
+
     currentView = AppView.chat;
     notifyListeners();
     unawaited(_persistAndScheduleRemote());
