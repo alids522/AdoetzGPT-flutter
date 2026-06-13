@@ -24,6 +24,12 @@ int intValue(Object? value, [int fallback = 0]) {
   return int.tryParse(value?.toString() ?? '') ?? fallback;
 }
 
+double doubleValue(Object? value, [double fallback = 0.0]) {
+  if (value is double) return value;
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
 bool boolValue(Object? value, [bool fallback = false]) {
   if (value is bool) return value;
   if (value is String) return value.toLowerCase() == 'true';
@@ -45,6 +51,13 @@ Map<String, int> _intMap(Object? value) {
   return Map<String, dynamic>.from(value).map(
     (key, item) => MapEntry(key, intValue(item)),
   )..removeWhere((key, item) => key.trim().isEmpty || item <= 0);
+}
+
+Map<String, double> _doubleMap(Object? value) {
+  if (value is! Map) return const {};
+  return Map<String, dynamic>.from(value).map(
+    (key, item) => MapEntry(key, doubleValue(item)),
+  )..removeWhere((key, item) => key.trim().isEmpty || item < 0);
 }
 
 enum ChatTargetType { model, agentServer }
@@ -1574,6 +1587,9 @@ class PersistedAppState {
     required this.endpoints,
     required this.agentConnectors,
     required this.modelContextOverrides,
+    required this.modelInputCosts,
+    required this.modelOutputCosts,
+    required this.modelCacheHitCosts,
     required this.genSettings,
     required this.voiceSettings,
     required this.sessions,
@@ -1602,6 +1618,9 @@ class PersistedAppState {
   final List<EndpointConfig> endpoints;
   final List<AgentConnector> agentConnectors;
   final Map<String, int> modelContextOverrides;
+  final Map<String, double> modelInputCosts;
+  final Map<String, double> modelOutputCosts;
+  final Map<String, double> modelCacheHitCosts;
   final GenerationSettings genSettings;
   final VoiceSettings voiceSettings;
   final List<Session> sessions;
@@ -1639,6 +1658,9 @@ class PersistedAppState {
       ],
       agentConnectors: const [],
       modelContextOverrides: const {},
+      modelInputCosts: const {},
+      modelOutputCosts: const {},
+      modelCacheHitCosts: const {},
       genSettings: const GenerationSettings(),
       voiceSettings: const VoiceSettings(),
       sessions: [session],
@@ -1688,6 +1710,9 @@ class PersistedAppState {
       modelContextOverrides: _intMap(
         json['modelContextOverrides'] ?? json['model_context_overrides'],
       ),
+      modelInputCosts: _doubleMap(json['modelInputCosts']),
+      modelOutputCosts: _doubleMap(json['modelOutputCosts']),
+      modelCacheHitCosts: _doubleMap(json['modelCacheHitCosts']),
       genSettings: GenerationSettings.fromJson(
         json['genSettings'] is Map
             ? Map<String, dynamic>.from(json['genSettings'])
@@ -1740,6 +1765,9 @@ class PersistedAppState {
         .map((item) => item.toJson(includeSecrets: includeSecrets))
         .toList(),
     'modelContextOverrides': modelContextOverrides,
+    'modelInputCosts': modelInputCosts,
+    'modelOutputCosts': modelOutputCosts,
+    'modelCacheHitCosts': modelCacheHitCosts,
     'genSettings': genSettings.toJson(),
     'voiceSettings': voiceSettings.toJson(),
     'sessions': sessions.map((item) => item.toJson()).toList(),

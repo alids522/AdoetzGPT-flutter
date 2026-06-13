@@ -90,6 +90,9 @@ class AdoetzAppState extends ChangeNotifier {
   List<TokenUsageRecord> tokenUsageData = const [];
   List<CustomCounter> customCounters = const [];
   Map<String, int> modelContextOverrides = const {};
+  Map<String, double> modelInputCosts = const {};
+  Map<String, double> modelOutputCosts = const {};
+  Map<String, double> modelCacheHitCosts = const {};
   List<String> geminiModels = const [];
   List<EndpointModel> endpointModels = const [];
   List<String> models = const ['gemini-2.5-flash'];
@@ -262,6 +265,9 @@ class AdoetzAppState extends ChangeNotifier {
       endpoints: endpoints,
       agentConnectors: agentConnectors,
       modelContextOverrides: modelContextOverrides,
+      modelInputCosts: modelInputCosts,
+      modelOutputCosts: modelOutputCosts,
+      modelCacheHitCosts: modelCacheHitCosts,
       genSettings: genSettings,
       voiceSettings: voiceSettings,
       sessions: persistedSessions,
@@ -304,6 +310,9 @@ class AdoetzAppState extends ChangeNotifier {
     tokenUsageData = state.tokenUsageData;
     customCounters = state.customCounters;
     modelContextOverrides = state.modelContextOverrides;
+    modelInputCosts = state.modelInputCosts;
+    modelOutputCosts = state.modelOutputCosts;
+    modelCacheHitCosts = state.modelCacheHitCosts;
     if (notify) notifyListeners();
   }
 
@@ -387,6 +396,15 @@ class AdoetzAppState extends ChangeNotifier {
       modelContextOverrides: remoteIsNewer
           ? {...local.modelContextOverrides, ...remote.modelContextOverrides}
           : {...remote.modelContextOverrides, ...local.modelContextOverrides},
+      modelInputCosts: remoteIsNewer
+          ? {...local.modelInputCosts, ...remote.modelInputCosts}
+          : {...remote.modelInputCosts, ...local.modelInputCosts},
+      modelOutputCosts: remoteIsNewer
+          ? {...local.modelOutputCosts, ...remote.modelOutputCosts}
+          : {...remote.modelOutputCosts, ...local.modelOutputCosts},
+      modelCacheHitCosts: remoteIsNewer
+          ? {...local.modelCacheHitCosts, ...remote.modelCacheHitCosts}
+          : {...remote.modelCacheHitCosts, ...local.modelCacheHitCosts},
       genSettings: remoteIsNewer ? remote.genSettings : local.genSettings,
       voiceSettings: remoteIsNewer ? remote.voiceSettings : local.voiceSettings,
       sessions: mergedSessions,
@@ -1849,6 +1867,35 @@ class AdoetzAppState extends ChangeNotifier {
       next[key] = tokens.clamp(1024, 8000000).toInt();
     }
     modelContextOverrides = next;
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void updateModelCost(String model, double? inputCost, double? outputCost, double? cacheHitCost) {
+    final iCosts = Map<String, double>.from(modelInputCosts);
+    if (inputCost == null || inputCost < 0) {
+      iCosts.remove(model);
+    } else {
+      iCosts[model] = inputCost;
+    }
+    modelInputCosts = iCosts;
+
+    final oCosts = Map<String, double>.from(modelOutputCosts);
+    if (outputCost == null || outputCost < 0) {
+      oCosts.remove(model);
+    } else {
+      oCosts[model] = outputCost;
+    }
+    modelOutputCosts = oCosts;
+
+    final cCosts = Map<String, double>.from(modelCacheHitCosts);
+    if (cacheHitCost == null || cacheHitCost < 0) {
+      cCosts.remove(model);
+    } else {
+      cCosts[model] = cacheHitCost;
+    }
+    modelCacheHitCosts = cCosts;
+
     notifyListeners();
     unawaited(_persistAndScheduleRemote());
   }

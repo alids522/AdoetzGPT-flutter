@@ -64,13 +64,16 @@ class StorageService {
       endpoints: state.endpoints,
       agentConnectors: state.agentConnectors,
       modelContextOverrides: state.modelContextOverrides,
+      modelInputCosts: state.modelInputCosts,
+      modelOutputCosts: state.modelOutputCosts,
+      modelCacheHitCosts: state.modelCacheHitCosts,
       genSettings: state.genSettings,
       voiceSettings: state.voiceSettings,
       sessions: compactSessions,
       currentSessionId: state.currentSessionId,
       memories: state.memories,
       tokenUsageData: state.tokenUsageData.length > 500
-          ? state.tokenUsageData.sublist(state.tokenUsageData.length - 500)
+          ? state.tokenUsageData.take(500).toList()
           : state.tokenUsageData,
       customCounters: state.customCounters,
       soundEffectsEnabled: state.soundEffectsEnabled,

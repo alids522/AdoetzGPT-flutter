@@ -20,6 +20,7 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
   String timeFilter = 'all';
   String groupBy = 'model';
   String chartType = 'bar';
+  String metricType = 'tokens';
   String selectedModel = 'all';
   String selectedEndpoint = 'all';
   String selectedSession = 'all';
@@ -46,8 +47,8 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
       Theme.of(context).brightness == Brightness.dark,
     );
     final filtered = _filtered(app.tokenUsageData);
-    final grouped = _grouped(filtered);
-    final totals = _totals(filtered);
+    final grouped = _grouped(filtered, app);
+    final totals = _totals(filtered, app);
     final models = app.tokenUsageData.map((item) => item.model).toSet().toList()
       ..sort();
     final endpoints =
@@ -175,6 +176,14 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
                     },
                     onChanged: (value) => setState(() => groupBy = value),
                   ),
+                  _ChoiceGroup(
+                    value: metricType,
+                    values: const {
+                      'tokens': 'Tokens',
+                      'cost': 'Cost',
+                    },
+                    onChanged: (value) => setState(() => metricType = value),
+                  ),
                   _IconChoice(
                     value: chartType,
                     onChanged: (value) => setState(() => chartType = value),
@@ -189,6 +198,12 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
           builder: (context, constraints) {
             final wide = constraints.maxWidth > 620;
             final cards = [
+              _StatCard(
+                label: 'TOTAL COST',
+                value: 0,
+                formattedValue: '\$${totals.cost.toStringAsFixed(4)}',
+                color: const Color(0xff10b981),
+              ),
               _StatCard(
                 label: copy.t('tokenUsage', 'totalTokens'),
                 value: totals.total,
@@ -273,7 +288,7 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
                       ],
                     ),
                   )
-                : _chart(grouped, filtered, p),
+                : _chart(grouped, filtered, p, app),
           ),
         ),
         const SizedBox(height: 24),
@@ -374,7 +389,7 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
     }).toList();
   }
 
-  List<_Group> _grouped(List<TokenUsageRecord> data) {
+  List<_Group> _grouped(List<TokenUsageRecord> data, AdoetzAppState app) {
     final groups = <String, _Totals>{};
     for (final item in data) {
       final key = groupBy == 'model' ? item.model : item.endpoint;
@@ -382,6 +397,15 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
       totals.input += item.inputTokens;
       totals.output += item.outputTokens;
       totals.total += item.totalTokens;
+      totals.cachedInput += item.cachedInputTokens;
+      totals.cacheCreation += item.cacheCreationInputTokens;
+
+      final inCost = app.modelInputCosts[item.model] ?? 0.0;
+      final outCost = app.modelOutputCosts[item.model] ?? 0.0;
+      final cacheCost = app.modelCacheHitCosts[item.model] ?? 0.0;
+      totals.cost += (item.inputTokens / 1000000) * inCost;
+      totals.cost += (item.outputTokens / 1000000) * outCost;
+      totals.cost += (item.cachedInputTokens / 1000000) * cacheCost;
     }
     final result = groups.entries
         .map(
@@ -390,6 +414,7 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
             entry.value.input,
             entry.value.output,
             entry.value.total,
+            entry.value.cost,
           ),
         )
         .toList();
@@ -397,7 +422,7 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
     return result;
   }
 
-  _Totals _totals(List<TokenUsageRecord> data) {
+  _Totals _totals(List<TokenUsageRecord> data, AdoetzAppState app) {
     final totals = _Totals();
     for (final item in data) {
       totals.input += item.inputTokens;
@@ -405,6 +430,13 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
       totals.total += item.totalTokens;
       totals.cachedInput += item.cachedInputTokens;
       totals.cacheCreation += item.cacheCreationInputTokens;
+
+      final inCost = app.modelInputCosts[item.model] ?? 0.0;
+      final outCost = app.modelOutputCosts[item.model] ?? 0.0;
+      final cacheCost = app.modelCacheHitCosts[item.model] ?? 0.0;
+      totals.cost += (item.inputTokens / 1000000) * inCost;
+      totals.cost += (item.outputTokens / 1000000) * outCost;
+      totals.cost += (item.cachedInputTokens / 1000000) * cacheCost;
     }
     return totals;
   }
@@ -413,17 +445,21 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
     List<_Group> grouped,
     List<TokenUsageRecord> filtered,
     AppPalette p,
+    AdoetzAppState app,
   ) {
     if (chartType == 'pie') {
-      final sum = grouped.fold<int>(0, (total, item) => total + item.total);
+      final sum = metricType == 'cost'
+          ? grouped.fold<double>(0.0, (total, item) => total + item.cost)
+          : grouped.fold<double>(0.0, (total, item) => total + item.total.toDouble());
       return PieChart(
         PieChartData(
           sections: grouped.take(10).toList().asMap().entries.map((entry) {
             final item = entry.value;
-            final percent = sum == 0 ? 0 : item.total / sum * 100;
+            final itemValue = metricType == 'cost' ? item.cost : item.total.toDouble();
+            final percent = sum == 0 ? 0 : itemValue / sum * 100;
             return PieChartSectionData(
               color: colors[entry.key % colors.length],
-              value: item.total.toDouble(),
+              value: itemValue,
               title: '${item.name}\n${percent.toStringAsFixed(0)}%',
               radius: 88,
               titleStyle: TextStyle(
@@ -439,12 +475,22 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
       );
     }
     if (chartType == 'line') {
-      final byDay = <String, int>{};
+      final byDay = <String, double>{};
       for (final item in filtered) {
         final label = DateFormat.Md().format(
           DateTime.fromMillisecondsSinceEpoch(item.timestamp),
         );
-        byDay[label] = (byDay[label] ?? 0) + item.totalTokens;
+        if (metricType == 'cost') {
+          final inCost = app.modelInputCosts[item.model] ?? 0.0;
+          final outCost = app.modelOutputCosts[item.model] ?? 0.0;
+          final cacheCost = app.modelCacheHitCosts[item.model] ?? 0.0;
+          final cost = (item.inputTokens / 1000000) * inCost +
+              (item.outputTokens / 1000000) * outCost +
+              (item.cachedInputTokens / 1000000) * cacheCost;
+          byDay[label] = (byDay[label] ?? 0.0) + cost;
+        } else {
+          byDay[label] = (byDay[label] ?? 0.0) + item.totalTokens.toDouble();
+        }
       }
       final entries = byDay.entries.toList().take(30).toList();
       return LineChart(
@@ -546,22 +592,32 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
         ),
         barGroups: grouped.take(10).toList().asMap().entries.map((entry) {
           final item = entry.value;
+          final rods = metricType == 'cost'
+              ? [
+                  BarChartRodData(
+                    toY: item.cost,
+                    color: const Color(0xff10b981),
+                    width: 14,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ]
+              : [
+                  BarChartRodData(
+                    toY: item.input.toDouble(),
+                    color: colors[0],
+                    width: 9,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  BarChartRodData(
+                    toY: item.output.toDouble(),
+                    color: colors[2],
+                    width: 9,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ];
           return BarChartGroupData(
             x: entry.key,
-            barRods: [
-              BarChartRodData(
-                toY: item.input.toDouble(),
-                color: colors[0],
-                width: 9,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              BarChartRodData(
-                toY: item.output.toDouble(),
-                color: colors[2],
-                width: 9,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ],
+            barRods: rods,
           );
         }).toList(),
       ),
@@ -574,11 +630,13 @@ class _StatCard extends StatelessWidget {
     required this.label,
     required this.value,
     required this.color,
+    this.formattedValue,
   });
 
   final String label;
   final int value;
   final Color color;
+  final String? formattedValue;
 
   @override
   Widget build(BuildContext context) {
@@ -590,7 +648,7 @@ class _StatCard extends StatelessWidget {
           Text(label.toUpperCase(), style: _labelStyle(context)),
           const SizedBox(height: 10),
           Text(
-            NumberFormat.decimalPattern().format(value),
+            formattedValue ?? NumberFormat.decimalPattern().format(value),
             style: TextStyle(
               color: color,
               fontSize: 30,
@@ -709,7 +767,8 @@ class _ModelUsageBreakdown extends StatelessWidget {
     final p = AppPalette.fromBrightness(
       Theme.of(context).brightness == Brightness.dark,
     );
-    final stats = _endpointModelStats(records);
+    final app = context.watch<AdoetzAppState>();
+    final stats = _endpointModelStats(records, app);
     return GlassPanel(
       radius: 24,
       child: Column(
@@ -802,6 +861,14 @@ class _ModelUsageRow extends StatelessWidget {
                 _UsageMetric(label: 'Cache Hit', value: stat.cachedInput),
               if (stat.cacheCreation > 0)
                 _UsageMetric(label: 'Cache Write', value: stat.cacheCreation),
+              Text(
+                '\$${stat.cost.toStringAsFixed(4)}',
+                style: TextStyle(
+                  color: Colors.green,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
             ],
           ),
         ],
@@ -904,7 +971,7 @@ class _CustomCounters extends StatelessWidget {
             runSpacing: 12,
             children: app.customCounters.map((counter) {
               final stats = _counterStats(counter);
-              final modelStats = _counterModelStats(counter);
+              final modelStats = _counterModelStats(counter, app);
               return SizedBox(
                 width: 270,
                 child: GlassPanel(
@@ -1065,7 +1132,7 @@ class _CustomCounters extends StatelessWidget {
     return stats;
   }
 
-  List<_EndpointUsageStat> _counterModelStats(CustomCounter counter) {
+  List<_EndpointUsageStat> _counterModelStats(CustomCounter counter, AdoetzAppState app) {
     return _endpointModelStats(
       filteredAll.where(
         (item) =>
@@ -1073,6 +1140,7 @@ class _CustomCounters extends StatelessWidget {
             (selectedModel == 'all' || item.model == selectedModel) &&
             (selectedEndpoint == 'all' || item.endpoint == selectedEndpoint),
       ),
+      app,
     );
   }
 
@@ -1234,15 +1302,17 @@ class _Totals {
   int total = 0;
   int cachedInput = 0;
   int cacheCreation = 0;
+  double cost = 0.0;
 }
 
 class _Group {
-  _Group(this.name, this.input, this.output, this.total);
+  _Group(this.name, this.input, this.output, this.total, this.cost);
 
   final String name;
   final int input;
   final int output;
   final int total;
+  final double cost;
 }
 
 class _CounterStats {
@@ -1271,10 +1341,12 @@ class _ModelUsageStat {
   int cachedInput = 0;
   int cacheCreation = 0;
   int count = 0;
+  double cost = 0.0;
 }
 
 List<_EndpointUsageStat> _endpointModelStats(
   Iterable<TokenUsageRecord> records,
+  AdoetzAppState app,
 ) {
   final endpointMap = <String, _EndpointUsageStat>{};
 
@@ -1307,6 +1379,12 @@ List<_EndpointUsageStat> _endpointModelStats(
     modelStat.cachedInput += record.cachedInputTokens;
     modelStat.cacheCreation += record.cacheCreationInputTokens;
     modelStat.count += 1;
+    final inCost = app.modelInputCosts[record.model] ?? 0.0;
+    final outCost = app.modelOutputCosts[record.model] ?? 0.0;
+    final cacheCost = app.modelCacheHitCosts[record.model] ?? 0.0;
+    modelStat.cost += (record.inputTokens / 1000000) * inCost;
+    modelStat.cost += (record.outputTokens / 1000000) * outCost;
+    modelStat.cost += (record.cachedInputTokens / 1000000) * cacheCost;
   }
 
   final result = endpointMap.values.toList()

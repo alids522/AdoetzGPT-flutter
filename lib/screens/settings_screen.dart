@@ -92,6 +92,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 22),
               _EndpointSection(copy: copy),
               const SizedBox(height: 22),
+              const _ModelCostsSection(),
+              const SizedBox(height: 22),
               const _ConnectorSection(),
               const SizedBox(height: 22),
               _VoiceSection(copy: copy),
@@ -1116,6 +1118,172 @@ class _EndpointSection extends StatelessWidget {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ModelCostsSection extends StatefulWidget {
+  const _ModelCostsSection();
+
+  @override
+  State<_ModelCostsSection> createState() => _ModelCostsSectionState();
+}
+
+class _ModelCostsSectionState extends State<_ModelCostsSection> {
+  String _newModelName = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+
+    final configuredModels = <String>{
+      ...app.modelInputCosts.keys,
+      ...app.modelOutputCosts.keys,
+      ...app.modelCacheHitCosts.keys,
+    }.toList()..sort();
+
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SectionHeader(
+            icon: Icons.attach_money,
+            title: 'Model Cost Pricing',
+            accent: Colors.green,
+          ),
+          const SizedBox(height: 16),
+          ...configuredModels.map((model) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: GlassPanel(
+                radius: 20,
+                padding: const EdgeInsets.all(16),
+                backgroundColor: p.surfaceDim,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            model,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(LucideIcons.trash2, size: 18),
+                          onPressed:
+                              () => app.updateModelCost(model, null, null, null),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _SettingField(
+                            label: 'Input / 1M (\$)',
+                            initialValue:
+                                app.modelInputCosts[model]?.toString() ?? '',
+                            hint: '0.15',
+                            onChanged:
+                                (v) => app.updateModelCost(
+                                  model,
+                                  double.tryParse(v) ?? 0.0,
+                                  app.modelOutputCosts[model],
+                                  app.modelCacheHitCosts[model],
+                                ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _SettingField(
+                            label: 'Output / 1M (\$)',
+                            initialValue:
+                                app.modelOutputCosts[model]?.toString() ?? '',
+                            hint: '0.60',
+                            onChanged:
+                                (v) => app.updateModelCost(
+                                  model,
+                                  app.modelInputCosts[model],
+                                  double.tryParse(v) ?? 0.0,
+                                  app.modelCacheHitCosts[model],
+                                ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _SettingField(
+                            label: 'Cache Hit / 1M (\$)',
+                            initialValue:
+                                app.modelCacheHitCosts[model]?.toString() ?? '',
+                            hint: '0.04',
+                            onChanged:
+                                (v) => app.updateModelCost(
+                                  model,
+                                  app.modelInputCosts[model],
+                                  app.modelOutputCosts[model],
+                                  double.tryParse(v) ?? 0.0,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('ADD MODEL', style: _labelStyle(context)),
+                    const SizedBox(height: 7),
+                    DropdownMenu<String>(
+                      initialSelection: _newModelName.isEmpty ? null : _newModelName,
+                      hintText: 'Select model...',
+                      enableSearch: true,
+                      enableFilter: true,
+                      expandedInsets: EdgeInsets.zero,
+                      dropdownMenuEntries: app.models
+                          .where((m) => !configuredModels.contains(m))
+                          .map((item) => DropdownMenuEntry(value: item, label: item))
+                          .toList(),
+                      onSelected: (value) {
+                        if (value != null) {
+                          setState(() => _newModelName = value);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Padding(
+                padding: const EdgeInsets.only(top: 26),
+                child: OutlinedButton.icon(
+                  onPressed:
+                      _newModelName.trim().isEmpty
+                          ? null
+                          : () {
+                            app.updateModelCost(_newModelName.trim(), 0, 0, 0);
+                            setState(() => _newModelName = '');
+                          },
+                  icon: const Icon(LucideIcons.plus, size: 16),
+                  label: const Text('Add'),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
