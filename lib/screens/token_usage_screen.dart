@@ -199,7 +199,7 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
             final wide = constraints.maxWidth > 620;
             final cards = [
               _StatCard(
-                label: 'TOTAL COST',
+                label: copy.t('tokenUsage', 'totalCost'),
                 value: 0,
                 formattedValue: '\$${totals.cost.toStringAsFixed(4)}',
                 color: const Color(0xff10b981),
@@ -221,13 +221,13 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
               ),
               if (totals.cachedInput > 0)
                 _StatCard(
-                  label: 'Cache Hits',
+                  label: copy.t('tokenUsage', 'cacheHits'),
                   value: totals.cachedInput,
                   color: const Color(0xff22c55e),
                 ),
               if (totals.cacheCreation > 0)
                 _StatCard(
-                  label: 'Cache Writes',
+                  label: copy.t('tokenUsage', 'cacheWrites'),
                   value: totals.cacheCreation,
                   color: const Color(0xfff59e0b),
                 ),
@@ -351,7 +351,7 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
                   if (ok == true) app.resetTokenUsage();
                 },
                 icon: Icon(LucideIcons.rotateCw, color: p.error, size: 16),
-                label: Text('${copy.t('tokenUsage', 'reset')} All Data'),
+                label: Text(copy.t('tokenUsage', 'resetAllData')),
                 style: OutlinedButton.styleFrom(foregroundColor: p.error),
               ),
             ],
@@ -830,6 +830,8 @@ class _ModelUsageRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final copy = UiCopy(app.language);
     final p = AppPalette.fromBrightness(
       Theme.of(context).brightness == Brightness.dark,
     );
@@ -853,14 +855,14 @@ class _ModelUsageRow extends StatelessWidget {
             spacing: compact ? 8 : 16,
             runSpacing: 4,
             children: [
-              _UsageMetric(label: 'Input', value: stat.input),
-              _UsageMetric(label: 'Output', value: stat.output),
-              _UsageMetric(label: 'Total', value: stat.total, strong: true),
-              _UsageMetric(label: 'Count', value: stat.count),
+              _UsageMetric(label: copy.t('tokenUsage', 'input'), value: stat.input),
+              _UsageMetric(label: copy.t('tokenUsage', 'output'), value: stat.output),
+              _UsageMetric(label: copy.t('tokenUsage', 'total'), value: stat.total, strong: true),
+              _UsageMetric(label: copy.t('tokenUsage', 'count'), value: stat.count),
               if (stat.cachedInput > 0)
-                _UsageMetric(label: 'Cache Hit', value: stat.cachedInput),
+                _UsageMetric(label: copy.t('tokenUsage', 'cacheHit'), value: stat.cachedInput),
               if (stat.cacheCreation > 0)
-                _UsageMetric(label: 'Cache Write', value: stat.cacheCreation),
+                _UsageMetric(label: copy.t('tokenUsage', 'cacheWrite'), value: stat.cacheCreation),
               Text(
                 '\$${stat.cost.toStringAsFixed(4)}',
                 style: TextStyle(
@@ -1017,7 +1019,7 @@ class _CustomCounters extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        '${stats.count} requests',
+                        '${stats.count} ${copy.t('tokenUsage', 'requests')}',
                         style: TextStyle(
                           color: p.onSurfaceVariant,
                           fontSize: 11,
@@ -1035,7 +1037,7 @@ class _CustomCounters extends StatelessWidget {
                         children: [
                           Expanded(
                             child: _MiniStat(
-                              label: 'Input',
+                              label: copy.t('tokenUsage', 'input'),
                               value: stats.input,
                               color: p.primary,
                             ),
@@ -1043,7 +1045,7 @@ class _CustomCounters extends StatelessWidget {
                           const SizedBox(width: 8),
                           Expanded(
                             child: _MiniStat(
-                              label: 'Output',
+                              label: copy.t('tokenUsage', 'output'),
                               value: stats.output,
                               color: p.secondary,
                             ),
@@ -1057,7 +1059,7 @@ class _CustomCounters extends StatelessWidget {
                             if (stats.cachedInput > 0)
                               Expanded(
                                 child: _MiniStat(
-                                  label: 'Cache Hit',
+                                  label: copy.t('tokenUsage', 'cacheHit'),
                                   value: stats.cachedInput,
                                   color: const Color(0xff22c55e),
                                 ),
@@ -1068,7 +1070,7 @@ class _CustomCounters extends StatelessWidget {
                             if (stats.cacheCreation > 0)
                               Expanded(
                                 child: _MiniStat(
-                                  label: 'Cache Write',
+                                  label: copy.t('tokenUsage', 'cacheWrite'),
                                   value: stats.cacheCreation,
                                   color: const Color(0xfff59e0b),
                                 ),
@@ -1078,7 +1080,7 @@ class _CustomCounters extends StatelessWidget {
                       ],
                       if (modelStats.isNotEmpty) ...[
                         const SizedBox(height: 12),
-                        Text('MODELS BY ENDPOINT', style: _labelStyle(context)),
+                        Text(copy.t('tokenUsage', 'modelsByEndpoint'), style: _labelStyle(context)),
                         const SizedBox(height: 4),
                         ...modelStats.map(
                           (epStat) => Padding(
