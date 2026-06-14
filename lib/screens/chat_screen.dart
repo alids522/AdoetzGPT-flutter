@@ -250,7 +250,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                     size: 20,
                   ),
                 ),
-                if (app.isGenerating)
+                if (app.isSessionGenerating(app.currentSession.id))
                   Positioned(
                     top: -2,
                     right: -2,
@@ -383,7 +383,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   void _sendOrLive() {
     final app = context.read<AdoetzAppState>();
-    if (app.isGenerating) {
+    if (app.isSessionGenerating(app.currentSession.id)) {
       app.stopGeneration();
       return;
     }
@@ -478,23 +478,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     for (final file in result.files) {
       final bytes = file.bytes;
       if (bytes == null) continue;
-      if (bytes.length > 5000000 &&
-          !(lookupMimeType(
-                file.name,
-                headerBytes: bytes,
-              )?.startsWith('image/') ??
-              false)) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'File "${file.name}" is too large. Please upload files under 5MB.',
-              ),
-            ),
-          );
-        }
-        continue;
-      }
+
       final mime =
           lookupMimeType(file.name, headerBytes: bytes) ??
           'application/octet-stream';
@@ -754,7 +738,7 @@ class _MessageBubble extends StatelessWidget {
         : laneWidth;
     final animateBubble = message.isUser && !editing;
     final streamingAssistant =
-        !message.isUser && isLast && app.isGenerating && !editing;
+        !message.isUser && isLast && app.isSessionGenerating(app.currentSession.id) && !editing;
 
     final bubble = Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
@@ -937,7 +921,7 @@ class _MessageBubble extends StatelessWidget {
                     label: 'Delete',
                     onTap: () => app.deleteMessage(message.id),
                   ),
-                  if (!message.isUser && isLast && !app.isGenerating)
+                  if (!message.isUser && isLast && !app.isSessionGenerating(app.currentSession.id))
                     _TinyAction(
                       icon: LucideIcons.rotateCw,
                       label: 'Regenerate',
@@ -946,12 +930,29 @@ class _MessageBubble extends StatelessWidget {
                   if (!message.isUser && message.tokenCount != null)
                     Padding(
                       padding: const EdgeInsets.only(left: 8),
-                      child: Text(
-                        '${message.tokenCount} tokens',
-                        style: TextStyle(
-                          color: p.onSurfaceVariant.withValues(alpha: 0.55),
-                          fontSize: 10,
-                          fontFamily: 'monospace',
+                      child: Tooltip(
+                        message: message.isEstimatedTokenCount
+                            ? 'Estimated using local tokenizer. Actual API billing may vary.'
+                            : 'Exact billable tokens verified by API provider.',
+                        child: Builder(
+                          builder: (context) {
+                            final durationMs = message.generationTimeMs;
+                            String? tps;
+                            if (durationMs != null && durationMs > 500 && message.tokenCount! > 5) {
+                              final rate = message.tokenCount! / (durationMs / 1000);
+                              if (rate < 1500) { // Hide mathematically absurd rates from instant cache dumps
+                                tps = rate.toStringAsFixed(1);
+                              }
+                            }
+                            return Text(
+                              '${message.tokenCount}${message.isEstimatedTokenCount ? '*' : ''} tokens${tps != null ? ' • $tps t/s' : ''}',
+                              style: TextStyle(
+                                color: p.onSurfaceVariant.withValues(alpha: 0.55),
+                                fontSize: 10,
+                                fontFamily: 'monospace',
+                              ),
+                            );
+                          },
                         ),
                       ),
                     ),
@@ -986,7 +987,7 @@ class _MessageBubble extends StatelessWidget {
         background: Container(
           alignment: Alignment.centerRight,
           padding: const EdgeInsets.only(right: 20),
-          child: Icon(LucideIcons.gitBranch, color: p.primary, size: 24),
+          child: Icon(LucideIcons.pencil, color: p.primary, size: 20),
         ),
         child: SizedBox(width: double.infinity, child: bubble),
       );
@@ -2127,7 +2128,19 @@ class _InputPod extends StatelessWidget {
               AnimatedBuilder(
                 animation: input,
                 builder: (context, _) {
-                  final liveTokens = historyTokens + countTokens(input.text);
+                  int attachedTokens = 0;
+                  for (final att in attachments) {
+                    if (att.type.startsWith('image')) {
+                      attachedTokens += 258;
+                    } else {
+                      try {
+                        attachedTokens += countTokens(utf8.decode(base64Decode(att.data)));
+                      } catch (_) {
+                        attachedTokens += countTokens(att.data);
+                      }
+                    }
+                  }
+                  final liveTokens = historyTokens + countTokens(input.text) + attachedTokens;
                   final contextRatio = (liveTokens / contextMax).clamp(0.0, 1.0).toDouble();
                   final contextColor =
                       Color.lerp(
@@ -2312,13 +2325,13 @@ class _InputPod extends StatelessWidget {
                     animation: input,
                     builder: (context, _) {
                       return Icon(
-                        app.isGenerating
+                        app.isSessionGenerating(app.currentSession.id)
                             ? LucideIcons.square
                             : (input.text.trim().isNotEmpty ||
                                       attachments.isNotEmpty
                                   ? LucideIcons.arrowUp
                                   : LucideIcons.audioLines),
-                        size: app.isGenerating ? 15 : 20,
+                        size: app.isSessionGenerating(app.currentSession.id) ? 15 : 20,
                         color: Colors.white,
                       );
                     },

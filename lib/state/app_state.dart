@@ -29,19 +29,19 @@ class AdoetzAppState extends ChangeNotifier {
   Timer? _remoteSyncTimer;
   Timer? _liveInputReleaseTimer;
   Timer? _liveOutputPulseTimer;
-  Timer? _streamFlushTimer;
-  String? _activeGenerationId;
-  String? _activeStreamSessionId;
-  String? _activeStreamBotId;
-  String _pendingStreamText = '';
-  String _lastDisplayedStreamText = '';
-  bool _generationStopRequested = false;
+  final Set<String> generatingSessionIds = {};
+  final Map<String, String> _sessionGenerationIds = {};
+  final Map<String, String> _generationBotIds = {};
+  final Set<String> _stopRequestedGenerations = {};
+  final Map<String, String> _pendingStreamTexts = {};
+  final Map<String, String> _lastDisplayedStreamTexts = {};
+  final Map<String, Timer> _streamFlushTimers = {};
+
   int _stateSavedAt = 0;
 
   final _audioPlayer = AudioPlayer();
 
   bool initialized = false;
-  bool isGenerating = false;
   bool isLiveActive = false;
   bool isLiveConnecting = false;
   bool isLiveRecording = false;
@@ -1365,28 +1365,18 @@ class AdoetzAppState extends ChangeNotifier {
     return memory;
   }
 
+  bool isSessionGenerating(String sessionId) => generatingSessionIds.contains(sessionId);
+
   Future<void> sendMessage(
     String prompt,
     List<AttachmentData> attachments,
   ) async {
-    if (isGenerating || (prompt.trim().isEmpty && attachments.isEmpty)) return;
+    final session = currentSession;
+    if (isSessionGenerating(session.id) || (prompt.trim().isEmpty && attachments.isEmpty)) return;
     unawaited(HapticFeedback.lightImpact());
     unawaited(_playSound('send_user_message.wav'));
     unawaited(_playSound('loading_ai_response.wav'));
 
-    _cancelStreamFlush(resetText: true);
-    _generationStopRequested = false;
-    Timer? loadingAudioTimer = Timer.periodic(const Duration(seconds: 2), (
-      timer,
-    ) {
-      if (!isGenerating || _generationStopRequested) {
-        timer.cancel();
-      } else {
-        unawaited(_playSound('loading_ai_response.wav'));
-      }
-    });
-
-    final session = currentSession;
     final target = activeChatTarget;
     final request = _requestConfigForTarget(target);
     final requestPrompt = _promptWithTargetContext(
@@ -1395,6 +1385,22 @@ class AdoetzAppState extends ChangeNotifier {
       target,
     );
     final now = DateTime.now();
+    final history = _historyForRequest(session);
+    final botId = (now.millisecondsSinceEpoch + 1).toString();
+    final modelForRequest = request.model;
+    final generationId = '${now.microsecondsSinceEpoch}-$botId';
+
+    _cancelStreamFlush(generationId: generationId, resetText: true);
+    _stopRequestedGenerations.remove(generationId);
+    Timer? loadingAudioTimer = Timer.periodic(const Duration(seconds: 2), (
+      timer,
+    ) {
+      if (!generatingSessionIds.contains(session.id) || _stopRequestedGenerations.contains(generationId)) {
+        timer.cancel();
+      } else {
+        unawaited(_playSound('loading_ai_response.wav'));
+      }
+    });
     final userMessage = Message(
       id: now.millisecondsSinceEpoch.toString(),
       text: prompt.trim(),
@@ -1403,10 +1409,6 @@ class AdoetzAppState extends ChangeNotifier {
       attachments: attachments,
       tokenCount: countTokens(prompt),
     );
-    final history = _historyForRequest(session);
-    final botId = (now.millisecondsSinceEpoch + 1).toString();
-    final modelForRequest = request.model;
-    final generationId = '${now.microsecondsSinceEpoch}-$botId';
     final botMessage = Message(
       id: botId,
       text: '',
@@ -1437,10 +1439,9 @@ class AdoetzAppState extends ChangeNotifier {
       updatedAt: now.millisecondsSinceEpoch,
     );
     _replaceSession(session.id, nextSession);
-    isGenerating = true;
-    _activeGenerationId = generationId;
-    _activeStreamSessionId = session.id;
-    _activeStreamBotId = botId;
+    generatingSessionIds.add(session.id);
+    _sessionGenerationIds[session.id] = generationId;
+    _generationBotIds[generationId] = botId;
     syncStatus = '';
     _maybeSaveUserMemory(prompt);
     notifyListeners();
@@ -1464,6 +1465,7 @@ class AdoetzAppState extends ChangeNotifier {
         thinkingMode: isThinkingMode,
         artifactMode: isArtifactMode,
         syncSettings: syncSettings,
+        generationId: generationId,
         onStatus: (status) {
           _queueStreamText(generationId, session.id, botId, status);
         },
@@ -1476,7 +1478,7 @@ class AdoetzAppState extends ChangeNotifier {
         },
       );
 
-      if (_activeGenerationId != generationId || _generationStopRequested) {
+      if (_sessionGenerationIds[session.id] != generationId || _stopRequestedGenerations.contains(generationId)) {
         return;
       }
       _queueStreamText(generationId, session.id, botId, response.text);
@@ -1486,6 +1488,8 @@ class AdoetzAppState extends ChangeNotifier {
         botId,
         response.text,
         tokenCount: response.outputTokens,
+        isEstimatedTokenCount: response.isEstimated,
+        generationTimeMs: response.generationTimeMs,
       );
       tokenUsageData = [
         ...tokenUsageData,
@@ -1499,10 +1503,11 @@ class AdoetzAppState extends ChangeNotifier {
           cachedInputTokens: response.cachedInputTokens,
           cacheCreationInputTokens: response.cacheCreationInputTokens,
           sessionId: session.id,
+          isEstimated: response.isEstimated,
         ),
       ];
 
-      if (isFirstMessage && !_generationStopRequested) {
+      if (isFirstMessage && !_stopRequestedGenerations.contains(generationId)) {
         unawaited(
           _generateSessionTitle(
             sessionId: session.id,
@@ -1513,7 +1518,7 @@ class AdoetzAppState extends ChangeNotifier {
         );
       }
     } catch (error) {
-      if (_activeGenerationId != generationId || _generationStopRequested) {
+      if (_sessionGenerationIds[session.id] != generationId || _stopRequestedGenerations.contains(generationId)) {
         return;
       }
       _updateBotMessage(
@@ -1524,33 +1529,32 @@ class AdoetzAppState extends ChangeNotifier {
     } finally {
       loadingAudioTimer?.cancel();
       loadingAudioTimer = null;
-      if (_activeGenerationId == generationId || !isGenerating) {
-        _cancelStreamFlush(resetText: true);
-        _activeGenerationId = null;
-        _activeStreamSessionId = null;
-        _activeStreamBotId = null;
-        _generationStopRequested = false;
-        isGenerating = false;
+      if (_sessionGenerationIds[session.id] == generationId) {
+        _cancelStreamFlush(generationId: generationId, resetText: true);
+        _sessionGenerationIds.remove(session.id);
+        _generationBotIds.remove(generationId);
+        generatingSessionIds.remove(session.id);
         notifyListeners();
         await _persistAndScheduleRemote();
       }
     }
   }
 
-  void stopGeneration() {
-    final generationId = _activeGenerationId;
-    final sessionId = _activeStreamSessionId;
-    final botId = _activeStreamBotId;
-    if (generationId != null && sessionId != null && botId != null) {
-      _flushStreamText(generationId, sessionId, botId, force: true);
+  void stopGeneration([String? sessionId]) {
+    final sid = sessionId ?? currentSession.id;
+    final generationId = _sessionGenerationIds[sid];
+    if (generationId != null) {
+      final botId = _generationBotIds[generationId];
+      if (botId != null) {
+        _flushStreamText(generationId, sid, botId, force: true);
+      }
+      _stopRequestedGenerations.add(generationId);
+      _cancelStreamFlush(generationId: generationId, resetText: true);
+      _sessionGenerationIds.remove(sid);
+      _generationBotIds.remove(generationId);
+      generatingSessionIds.remove(sid);
+      _ai.cancelGeneration(generationId);
     }
-    _generationStopRequested = true;
-    _activeGenerationId = null;
-    _activeStreamSessionId = null;
-    _activeStreamBotId = null;
-    _cancelStreamFlush(resetText: true);
-    _ai.cancelActiveRequests();
-    isGenerating = false;
     notifyListeners();
     unawaited(_persistAndScheduleRemote());
   }
@@ -1775,15 +1779,16 @@ class AdoetzAppState extends ChangeNotifier {
     final attachments = messages[index].attachments;
     final trimmed = messages.sublist(0, index);
 
-    final newSession = Session.empty(null, activeChatTarget.id);
-    final forkedSession = newSession.copyWith(
-      title: '${session.title} (Branch)',
+    final updatedSession = session.copyWith(
       messages: trimmed,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
 
-    sessions = [forkedSession, ...sessions];
-    currentSessionId = forkedSession.id;
+    final sessionIndex = sessions.indexWhere((s) => s.id == session.id);
+    if (sessionIndex != -1) {
+      sessions[sessionIndex] = updatedSession;
+    }
+
     notifyListeners();
     unawaited(sendMessage(text, attachments));
   }
@@ -1796,14 +1801,16 @@ class AdoetzAppState extends ChangeNotifier {
         final user = session.messages[i];
         final trimmed = session.messages.sublist(0, i);
 
-        final newSession = Session.empty(null, activeChatTarget.id);
-        final forkedSession = newSession.copyWith(
-          title: '${session.title} (Branch)',
+        final updatedSession = session.copyWith(
           messages: trimmed,
           updatedAt: DateTime.now().millisecondsSinceEpoch,
         );
-        sessions = [forkedSession, ...sessions];
-        currentSessionId = forkedSession.id;
+
+        final sessionIndex = sessions.indexWhere((s) => s.id == session.id);
+        if (sessionIndex != -1) {
+          sessions[sessionIndex] = updatedSession;
+        }
+
         notifyListeners();
         unawaited(sendMessage(user.text, user.attachments));
         return;
@@ -2126,10 +2133,10 @@ class AdoetzAppState extends ChangeNotifier {
     String botId,
     String text,
   ) {
-    if (_activeGenerationId != generationId || _generationStopRequested) return;
-    _pendingStreamText = text;
-    _streamFlushTimer ??= Timer(_streamFlushDelay(text.length), () {
-      _streamFlushTimer = null;
+    if (_sessionGenerationIds[sessionId] != generationId || _stopRequestedGenerations.contains(generationId)) return;
+    _pendingStreamTexts[generationId] = text;
+    _streamFlushTimers[generationId] ??= Timer(_streamFlushDelay(text.length), () {
+      _streamFlushTimers.remove(generationId);
       _flushStreamText(generationId, sessionId, botId);
     });
   }
@@ -2146,25 +2153,36 @@ class AdoetzAppState extends ChangeNotifier {
     String botId, {
     bool force = false,
   }) {
-    if (_activeGenerationId != generationId || _pendingStreamText.isEmpty) {
+    final pendingText = _pendingStreamTexts[generationId];
+    if (_sessionGenerationIds[sessionId] != generationId || pendingText == null || pendingText.isEmpty) {
       return;
     }
-    _streamFlushTimer?.cancel();
-    _streamFlushTimer = null;
+    _streamFlushTimers[generationId]?.cancel();
+    _streamFlushTimers.remove(generationId);
 
-    final text = _pendingStreamText;
-    if (!force && text == _lastDisplayedStreamText) return;
+    if (!force && pendingText == _lastDisplayedStreamTexts[generationId]) return;
 
-    _lastDisplayedStreamText = text;
-    _updateBotMessage(sessionId, botId, text);
+    _lastDisplayedStreamTexts[generationId] = pendingText;
+    _updateBotMessage(sessionId, botId, pendingText);
   }
 
-  void _cancelStreamFlush({bool resetText = false}) {
-    _streamFlushTimer?.cancel();
-    _streamFlushTimer = null;
-    if (resetText) {
-      _pendingStreamText = '';
-      _lastDisplayedStreamText = '';
+  void _cancelStreamFlush({String? generationId, bool resetText = false}) {
+    if (generationId != null) {
+      _streamFlushTimers[generationId]?.cancel();
+      _streamFlushTimers.remove(generationId);
+      if (resetText) {
+        _pendingStreamTexts.remove(generationId);
+        _lastDisplayedStreamTexts.remove(generationId);
+      }
+    } else {
+      for (final timer in _streamFlushTimers.values) {
+        timer.cancel();
+      }
+      _streamFlushTimers.clear();
+      if (resetText) {
+        _pendingStreamTexts.clear();
+        _lastDisplayedStreamTexts.clear();
+      }
     }
   }
 
@@ -2173,13 +2191,22 @@ class AdoetzAppState extends ChangeNotifier {
     String botId,
     String text, {
     int? tokenCount,
+    bool? isEstimatedTokenCount,
+    int? generationTimeMs,
+    List<String>? toolEventIds,
   }) {
     final session = sessions.where((item) => item.id == sessionId).firstOrNull;
     if (session == null) return;
     final messages = session.messages
         .map(
           (message) => message.id == botId
-              ? message.copyWith(text: text, tokenCount: tokenCount)
+              ? message.copyWith(
+                  text: text,
+                  tokenCount: tokenCount,
+                  isEstimatedTokenCount: isEstimatedTokenCount,
+                  generationTimeMs: generationTimeMs,
+                  toolEventIds: toolEventIds,
+                )
               : message,
         )
         .toList();

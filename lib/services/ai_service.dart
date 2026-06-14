@@ -18,6 +18,8 @@ class GeneratedResponse {
     required this.endpointName,
     this.cachedInputTokens = 0,
     this.cacheCreationInputTokens = 0,
+    this.isEstimated = true,
+    this.generationTimeMs,
   });
 
   final String text;
@@ -26,6 +28,8 @@ class GeneratedResponse {
   final String endpointName;
   final int cachedInputTokens;
   final int cacheCreationInputTokens;
+  final bool isEstimated;
+  final int? generationTimeMs;
 }
 
 class ModelCatalog {
@@ -50,15 +54,20 @@ class ModelCatalog {
 }
 
 class AiService {
-  http.Client _client = http.Client();
+  final _activeClients = <String, http.Client>{};
+  final http.Client _globalClient = http.Client();
 
-  void cancelActiveRequests() {
-    _client.close();
-    _client = http.Client();
+  void cancelGeneration(String generationId) {
+    final client = _activeClients.remove(generationId);
+    client?.close();
   }
 
   void dispose() {
-    _client.close();
+    _globalClient.close();
+    for (final client in _activeClients.values) {
+      client.close();
+    }
+    _activeClients.clear();
   }
 
   static const _textPrompts = {
@@ -96,7 +105,7 @@ class AiService {
           '/v1beta/models',
           {'key': geminiApiKey.trim()},
         );
-        final response = await _client
+        final response = await _globalClient
             .get(uri)
             .timeout(const Duration(seconds: 10));
         if (response.statusCode >= 200 && response.statusCode < 300) {
@@ -249,7 +258,7 @@ class AiService {
           ..headers.addAll(headers)
           ..body = jsonEncode(payload);
 
-    final streamed = await _sendWithProxyFallback(request, syncSettings);
+    final streamed = await _sendWithProxyFallback(_globalClient, request, syncSettings);
     if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
       final body = await streamed.stream.bytesToString();
       // 400 Bad Request for an invalid model (like OpenClaw) proves the server is online
@@ -279,8 +288,15 @@ class AiService {
     required SyncSettings syncSettings,
     required TextDelta onText,
     required StatusCallback onStatus,
+    String? generationId,
   }) async {
-    final modelName = selectedModel.trim();
+    final client = http.Client();
+    if (generationId != null) {
+      _activeClients[generationId] = client;
+    }
+    
+    try {
+      final modelName = selectedModel.trim();
     final endpointModel = _resolveEndpointModel(
       modelName,
       endpoints,
@@ -318,7 +334,8 @@ class AiService {
     }
 
     if (endpoint != null && endpoint.url.trim().isNotEmpty) {
-      return _sendEndpoint(
+      return await _sendEndpoint(
+        client: client,
         prompt: prompt,
         attachments: attachments,
         history: history,
@@ -335,7 +352,8 @@ class AiService {
       );
     }
 
-    return _sendGemini(
+    return await _sendGemini(
+      client: client,
       prompt: prompt,
       attachments: attachments,
       history: history,
@@ -349,6 +367,12 @@ class AiService {
       contextLimit: contextLimit,
       onText: onText,
     );
+    } finally {
+      if (generationId != null) {
+        _activeClients.remove(generationId);
+      }
+      client.close();
+    }
   }
 
   Future<String> generateTitle({
@@ -450,6 +474,7 @@ $chatHistory
   }
 
   Future<GeneratedResponse> _sendEndpoint({
+    required http.Client client,
     required String prompt,
     required List<AttachmentData> attachments,
     required List<Message> history,
@@ -535,7 +560,7 @@ $chatHistory
       request.headers['Authorization'] = 'Bearer ${endpoint.key}';
     }
 
-    final streamed = await _sendWithProxyFallback(request, syncSettings);
+    final streamed = await _sendWithProxyFallback(client, request, syncSettings);
     if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
       final body = await streamed.stream.bytesToString();
       throw Exception(_extractApiError(body, 'Failed to connect to endpoint.'));
@@ -551,6 +576,8 @@ $chatHistory
     var cachedInputTokens = 0;
     var cacheCreationInputTokens = 0;
     var inReasoning = false;
+    var isEstimated = true;
+    final stopwatch = Stopwatch()..start();
 
     await for (final line
         in streamed.stream
@@ -577,6 +604,7 @@ $chatHistory
             cacheCreationInputTokens,
             cacheUsage.cacheCreationInputTokens,
           );
+          isEstimated = false;
         }
         final choice =
             data['choices'] is List && (data['choices'] as List).isNotEmpty
@@ -674,10 +702,13 @@ $chatHistory
       endpointName: endpoint.name,
       cachedInputTokens: cachedInputTokens,
       cacheCreationInputTokens: cacheCreationInputTokens,
+      isEstimated: isEstimated,
+      generationTimeMs: stopwatch.elapsedMilliseconds,
     );
   }
 
   Future<GeneratedResponse> _sendGemini({
+    required http.Client client,
     required String prompt,
     required List<AttachmentData> attachments,
     required List<Message> history,
@@ -756,7 +787,7 @@ $chatHistory
     final request = http.Request('POST', uri)
       ..headers['Content-Type'] = 'application/json'
       ..body = jsonEncode(body);
-    final streamed = await _client.send(request);
+    final streamed = await client.send(request);
     if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
       final error = await streamed.stream.bytesToString();
       throw Exception(_extractApiError(error, 'Gemini request failed.'));
@@ -845,7 +876,7 @@ $chatHistory
             'max_tokens': 1000,
           });
 
-    final streamed = await _sendWithProxyFallback(request, syncSettings);
+    final streamed = await _sendWithProxyFallback(http.Client(), request, syncSettings);
     final body = await streamed.stream.bytesToString();
     if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
       throw Exception(_extractApiError(body, 'Title generation failed.'));
@@ -880,7 +911,7 @@ $chatHistory
       '/v1beta/models/$model:generateContent',
       {'key': key},
     );
-    final response = await _client
+    final response = await _globalClient
         .post(
           uri,
           headers: {'Content-Type': 'application/json'},
@@ -1170,11 +1201,12 @@ $chatHistory
   }
 
   Future<http.StreamedResponse> _sendWithProxyFallback(
+    http.Client client,
     http.Request request,
     SyncSettings syncSettings,
   ) async {
     try {
-      return await _client.send(request);
+      return await client.send(request);
     } catch (error) {
       final base = syncSettings.apiBaseUrl.trim().replaceAll(RegExp(r'/$'), '');
       if (base.isEmpty) rethrow;
@@ -1182,7 +1214,7 @@ $chatHistory
         ..headers.addAll(request.headers)
         ..headers['x-target-url'] = request.url.toString()
         ..bodyBytes = request.bodyBytes;
-      return _client.send(proxy);
+      return client.send(proxy);
     }
   }
 
@@ -1192,13 +1224,13 @@ $chatHistory
     SyncSettings syncSettings,
   ) async {
     try {
-      return await _client
+      return await _globalClient
           .get(uri, headers: headers)
           .timeout(const Duration(seconds: 12));
     } catch (_) {
       final base = _proxyBase(syncSettings);
       if (base.isEmpty) rethrow;
-      return _client
+      return _globalClient
           .get(
             Uri.parse('$base/api/proxy'),
             headers: {...headers, 'x-target-url': uri.toString()},
@@ -1384,7 +1416,7 @@ $chatHistory
       if (settings.tavilyApiKey.trim().isEmpty) {
         throw Exception('Tavily API key is not configured.');
       }
-      final response = await _client.post(
+      final response = await _globalClient.post(
         Uri.https('api.tavily.com', '/search'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -1452,7 +1484,7 @@ $chatHistory
               ],
               'temperature': 0.2,
             });
-      final response = await _sendWithProxyFallback(request, syncSettings);
+      final response = await _sendWithProxyFallback(_globalClient, request, syncSettings);
       final body = await response.stream.bytesToString();
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception(_extractApiError(body, 'Endpoint web search failed.'));
@@ -1478,7 +1510,7 @@ $chatHistory
       '/v1beta/models/${settings.webSearchModel.isEmpty ? 'gemini-flash-lite-latest' : settings.webSearchModel}:generateContent',
       {'key': geminiApiKey.trim()},
     );
-    final response = await _client.post(
+    final response = await _globalClient.post(
       uri,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -1508,7 +1540,7 @@ $chatHistory
   }
 
   Future<Map<String, dynamic>> _getJson(Uri uri) async {
-    final response = await _client
+    final response = await _globalClient
         .get(uri)
         .timeout(const Duration(seconds: 12));
     if (response.statusCode < 200 || response.statusCode >= 300) {

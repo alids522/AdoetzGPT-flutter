@@ -218,6 +218,8 @@ class Message {
     this.connectorId,
     this.modelOrAgentId,
     this.toolEventIds = const [],
+    this.isEstimatedTokenCount = true,
+    this.generationTimeMs,
   });
 
   final String id;
@@ -233,6 +235,8 @@ class Message {
   final String? connectorId;
   final String? modelOrAgentId;
   final List<String> toolEventIds;
+  final bool isEstimatedTokenCount;
+  final int? generationTimeMs;
 
   bool get isUser => sender == 'user';
   bool get isSystem => sender == 'system';
@@ -250,6 +254,8 @@ class Message {
     String? connectorId,
     String? modelOrAgentId,
     List<String>? toolEventIds,
+    bool? isEstimatedTokenCount,
+    int? generationTimeMs,
     bool clearModel = false,
     bool clearTokenCount = false,
     bool clearTarget = false,
@@ -270,6 +276,8 @@ class Message {
           ? null
           : modelOrAgentId ?? this.modelOrAgentId,
       toolEventIds: clearTarget ? const [] : toolEventIds ?? this.toolEventIds,
+      isEstimatedTokenCount: isEstimatedTokenCount ?? this.isEstimatedTokenCount,
+      generationTimeMs: generationTimeMs ?? this.generationTimeMs,
     );
   }
 
@@ -314,6 +322,10 @@ class Message {
                 .map((item) => item.toString())
                 .toList()
           : const [],
+      isEstimatedTokenCount: json.containsKey('isEstimatedTokenCount') 
+          ? json['isEstimatedTokenCount'] == true 
+          : true,
+      generationTimeMs: json['generationTimeMs'] != null ? intValue(json['generationTimeMs']) : null,
     );
   }
 
@@ -332,6 +344,8 @@ class Message {
     if (connectorId != null) 'connector_id': connectorId,
     if (modelOrAgentId != null) 'model_or_agent_id': modelOrAgentId,
     if (toolEventIds.isNotEmpty) 'tool_event_ids': toolEventIds,
+    'isEstimatedTokenCount': isEstimatedTokenCount,
+    if (generationTimeMs != null) 'generationTimeMs': generationTimeMs,
   };
 }
 
@@ -1306,6 +1320,7 @@ class TokenUsageRecord {
     this.cachedInputTokens = 0,
     this.cacheCreationInputTokens = 0,
     this.sessionId,
+    this.isEstimated = true,
   });
 
   final int timestamp;
@@ -1317,6 +1332,7 @@ class TokenUsageRecord {
   final int cachedInputTokens;
   final int cacheCreationInputTokens;
   final String? sessionId;
+  final bool isEstimated;
 
   factory TokenUsageRecord.fromJson(Map<String, dynamic> json) {
     return TokenUsageRecord(
@@ -1333,6 +1349,9 @@ class TokenUsageRecord {
         json['cacheCreationInputTokens'] ?? json['cache_creation_input_tokens'],
       ),
       sessionId: stringValue(json['sessionId']),
+      isEstimated: json.containsKey('isEstimated') 
+          ? json['isEstimated'] == true 
+          : true,
     );
   }
 
@@ -1347,6 +1366,7 @@ class TokenUsageRecord {
     if (cacheCreationInputTokens > 0)
       'cacheCreationInputTokens': cacheCreationInputTokens,
     if (sessionId != null) 'sessionId': sessionId,
+    'isEstimated': isEstimated,
   };
 }
 
