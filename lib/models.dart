@@ -1539,6 +1539,9 @@ class SyncSettings {
     this.database = const DatabaseSettings(),
     this.backupDatabases = const [],
     this.autoSyncBackups = false,
+    this.useSupabase = false,
+    this.supabaseUrl = 'https://supabase.alids.app',
+    this.supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlLWRlbW8iLCJpYXQiOjE3ODE0MjkzOTMsImV4cCI6MjA4Mjc1ODQwMH0.qgQ3hxL9JgRhZ-0vuIAG-myu8w5UeWkG1iNrsjqDvR0',
   });
 
   final bool enabled;
@@ -1546,6 +1549,9 @@ class SyncSettings {
   final DatabaseSettings database;
   final List<DatabaseSettings> backupDatabases;
   final bool autoSyncBackups;
+  final bool useSupabase;
+  final String supabaseUrl;
+  final String supabaseAnonKey;
 
   SyncSettings copyWith({
     bool? enabled,
@@ -1553,6 +1559,9 @@ class SyncSettings {
     DatabaseSettings? database,
     List<DatabaseSettings>? backupDatabases,
     bool? autoSyncBackups,
+    bool? useSupabase,
+    String? supabaseUrl,
+    String? supabaseAnonKey,
   }) {
     return SyncSettings(
       enabled: enabled ?? this.enabled,
@@ -1560,6 +1569,9 @@ class SyncSettings {
       database: database ?? this.database,
       backupDatabases: backupDatabases ?? this.backupDatabases,
       autoSyncBackups: autoSyncBackups ?? this.autoSyncBackups,
+      useSupabase: useSupabase ?? this.useSupabase,
+      supabaseUrl: supabaseUrl ?? this.supabaseUrl,
+      supabaseAnonKey: supabaseAnonKey ?? this.supabaseAnonKey,
     );
   }
 
@@ -1582,6 +1594,9 @@ class SyncSettings {
         json['backupDatabases'],
       ).map(DatabaseSettings.fromJson).toList(),
       autoSyncBackups: boolValue(json['autoSyncBackups']),
+      useSupabase: boolValue(json['useSupabase']),
+      supabaseUrl: stringValue(json['supabaseUrl']),
+      supabaseAnonKey: stringValue(json['supabaseAnonKey']),
     );
   }
 
@@ -1593,6 +1608,9 @@ class SyncSettings {
         .map((db) => db.toJson(includePassword: includePassword))
         .toList(),
     'autoSyncBackups': autoSyncBackups,
+    'useSupabase': useSupabase,
+    'supabaseUrl': supabaseUrl,
+    if (includePassword) 'supabaseAnonKey': supabaseAnonKey,
   };
 }
 

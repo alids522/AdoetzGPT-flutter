@@ -628,7 +628,7 @@ class AdoetzAppState extends ChangeNotifier {
     authToken = result.token;
     userName = result.user.label;
     syncSettings = syncSettings.copyWith(enabled: true);
-    await _sync.pushRemoteState(buildState());
+    await _sync.pushRemoteState(buildState(), syncSettings);
     lastSyncAt = DateTime.now().millisecondsSinceEpoch;
     syncStatus = 'Guest session saved and synced to database.';
     notifyListeners();
@@ -2115,7 +2115,7 @@ class AdoetzAppState extends ChangeNotifier {
       if (remote != null) {
         _applyState(_mergeRemote(buildState(), remote), notify: false);
       }
-      await _sync.pushRemoteState(buildState());
+      await _sync.pushRemoteState(buildState(), syncSettings);
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
       syncStatus = 'Successfully synced to database.';
     } catch (error) {
@@ -2601,7 +2601,7 @@ class AdoetzAppState extends ChangeNotifier {
       try {
         syncStatus = 'Syncing to remote...';
         notifyListeners();
-        await _sync.pushRemoteState(buildState());
+        await _sync.pushRemoteState(buildState(), syncSettings);
         lastPushedHash = stateHash;
         lastSyncAt = DateTime.now().millisecondsSinceEpoch;
         syncStatus = 'Successfully synced to database.';

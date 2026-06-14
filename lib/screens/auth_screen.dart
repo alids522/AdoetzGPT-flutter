@@ -96,11 +96,11 @@ class _AuthScreenState extends State<AuthScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        _label('Username', p),
+                        _label(app.syncSettings.useSupabase ? 'Email' : 'Username', p),
                         _field(
                           controller: _username,
                           icon: LucideIcons.user,
-                          hint: 'Enter username',
+                          hint: app.syncSettings.useSupabase ? 'Enter email' : 'Enter username',
                         ),
                         const SizedBox(height: 16),
                         _label('Password', p),
@@ -310,6 +310,12 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   bool _canSubmit(AdoetzAppState app) {
+    if (app.syncSettings.useSupabase) {
+      return _username.text.trim().isNotEmpty &&
+          _password.text.isNotEmpty &&
+          app.syncSettings.supabaseUrl.trim().isNotEmpty &&
+          app.syncSettings.supabaseAnonKey.trim().isNotEmpty;
+    }
     final db = app.syncSettings.database;
     return _username.text.trim().isNotEmpty &&
         _password.text.isNotEmpty &&
@@ -385,106 +391,168 @@ class _AdvancedDbSettings extends StatelessWidget {
             app.syncSettings.copyWith(apiBaseUrl: value),
           ),
         ),
-        const SizedBox(height: 14),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: p.surfaceDim,
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: p.outline),
+        SwitchListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Use Supabase as Primary Engine'),
+          subtitle: const Text('Connect directly to Supabase using native SDK.'),
+          value: app.syncSettings.useSupabase,
+          onChanged: (value) => app.updateSyncSettings(
+            app.syncSettings.copyWith(useSupabase: value),
           ),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'DATABASE SYNC SETTINGS',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: p.onSurfaceVariant,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1.6,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              _smallField(
-                context,
-                label: 'Database URL',
-                icon: LucideIcons.server,
-                value: db.databaseUrl,
-                onChanged: (value) =>
-                    _updateDb(context, db.copyWith(databaseUrl: value)),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: _smallField(
-                      context,
-                      label: 'Database',
-                      icon: LucideIcons.database,
-                      value: db.database,
-                      onChanged: (value) =>
-                          _updateDb(context, db.copyWith(database: value)),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _smallField(
-                      context,
-                      label: 'Schema',
-                      value: db.schemaName,
-                      onChanged: (value) => _updateDb(
-                        context,
-                        db.copyWith(
-                          schemaName: value.isEmpty ? 'adoetzgpt' : value,
+        ),
+        if (app.syncSettings.useSupabase) ...[
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: p.surfaceDim,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: p.outline),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'SUPABASE CONFIGURATION',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: p.onSurfaceVariant,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.6,
                         ),
                       ),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                _smallField(
+                  context,
+                  label: 'Supabase URL',
+                  icon: LucideIcons.server,
+                  value: app.syncSettings.supabaseUrl,
+                  onChanged: (value) => app.updateSyncSettings(
+                    app.syncSettings.copyWith(supabaseUrl: value),
                   ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: _smallField(
-                      context,
-                      label: 'DB User',
-                      value: db.user,
-                      onChanged: (value) =>
-                          _updateDb(context, db.copyWith(user: value)),
-                    ),
+                ),
+                const SizedBox(height: 10),
+                _smallField(
+                  context,
+                  label: 'Supabase Anon Key',
+                  icon: LucideIcons.keyRound,
+                  value: app.syncSettings.supabaseAnonKey,
+                  obscure: true,
+                  onChanged: (value) => app.updateSyncSettings(
+                    app.syncSettings.copyWith(supabaseAnonKey: value),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _smallField(
-                      context,
-                      label: 'DB Password',
-                      icon: LucideIcons.keyRound,
-                      value: db.password,
-                      obscure: true,
-                      onChanged: (value) =>
-                          _updateDb(context, db.copyWith(password: value)),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              _smallField(
-                context,
-                label: 'Custom Port',
-                value: db.port,
-                onChanged: (value) =>
-                    _updateDb(context, db.copyWith(port: value)),
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
-        ),
+        ] else ...[
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: p.surfaceDim,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: p.outline),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'DATABASE SYNC SETTINGS',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: p.onSurfaceVariant,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.6,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                _smallField(
+                  context,
+                  label: 'Database URL',
+                  icon: LucideIcons.server,
+                  value: db.databaseUrl,
+                  onChanged: (value) =>
+                      _updateDb(context, db.copyWith(databaseUrl: value)),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _smallField(
+                        context,
+                        label: 'Database',
+                        icon: LucideIcons.database,
+                        value: db.database,
+                        onChanged: (value) =>
+                            _updateDb(context, db.copyWith(database: value)),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _smallField(
+                        context,
+                        label: 'Schema',
+                        value: db.schemaName,
+                        onChanged: (value) => _updateDb(
+                          context,
+                          db.copyWith(
+                            schemaName: value.isEmpty ? 'adoetzgpt' : value,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _smallField(
+                        context,
+                        label: 'DB User',
+                        value: db.user,
+                        onChanged: (value) =>
+                            _updateDb(context, db.copyWith(user: value)),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _smallField(
+                        context,
+                        label: 'DB Password',
+                        icon: LucideIcons.keyRound,
+                        value: db.password,
+                        obscure: true,
+                        onChanged: (value) =>
+                            _updateDb(context, db.copyWith(password: value)),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                _smallField(
+                  context,
+                  label: 'Custom Port',
+                  value: db.port,
+                  onChanged: (value) =>
+                      _updateDb(context, db.copyWith(port: value)),
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
     );
   }

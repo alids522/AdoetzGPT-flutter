@@ -1261,13 +1261,15 @@ class _MiniStat extends StatelessWidget {
       Theme.of(context).brightness == Brightness.dark,
     );
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
       decoration: BoxDecoration(
         color: p.surfaceDim,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: p.outline),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
             label.toUpperCase(),
@@ -1277,10 +1279,10 @@ class _MiniStat extends StatelessWidget {
               fontWeight: FontWeight.w900,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           Text(
             NumberFormat.compact().format(value),
-            style: TextStyle(color: color, fontWeight: FontWeight.w900),
+            style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 13),
           ),
         ],
       ),

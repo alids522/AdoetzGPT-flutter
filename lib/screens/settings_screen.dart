@@ -675,8 +675,8 @@ class _SyncSection extends StatelessWidget {
                         const SizedBox(height: 12),
                         TextField(
                           controller: guestUser,
-                          decoration: const InputDecoration(
-                            labelText: 'Username',
+                          decoration: InputDecoration(
+                            labelText: app.syncSettings.useSupabase ? 'Email' : 'Username',
                           ),
                         ),
                         const SizedBox(height: 10),
@@ -715,8 +715,38 @@ class _SyncSection extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 16),
-                _SettingField(
-                  label: 'Sync API URL',
+                SwitchListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Use Supabase as Primary Engine'),
+                  subtitle: const Text('Connect directly to Supabase using native SDK.'),
+                  value: app.syncSettings.useSupabase,
+                  onChanged: (value) => app.updateSyncSettings(
+                    app.syncSettings.copyWith(useSupabase: value),
+                  ),
+                ),
+                if (app.syncSettings.useSupabase) ...[
+                  const SizedBox(height: 12),
+                  _SettingField(
+                    label: 'Supabase URL',
+                    initialValue: app.syncSettings.supabaseUrl,
+                    onChanged: (value) => app.updateSyncSettings(
+                      app.syncSettings.copyWith(supabaseUrl: value),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _SettingField(
+                    label: 'Supabase Anon Key',
+                    initialValue: app.syncSettings.supabaseAnonKey,
+                    obscure: true,
+                    onChanged: (value) => app.updateSyncSettings(
+                      app.syncSettings.copyWith(supabaseAnonKey: value),
+                    ),
+                  ),
+                ] else ...[
+                  const SizedBox(height: 16),
+                  _SettingField(
+                    label: 'Sync API URL',
                   initialValue: app.syncSettings.apiBaseUrl,
                   hint: kIsWeb
                       ? 'Chrome uses HTTP sync API, usually http://127.0.0.1:3000'
@@ -789,6 +819,7 @@ class _SyncSection extends StatelessWidget {
                   onChanged: (value) =>
                       _updateDb(context, db.copyWith(port: value)),
                 ),
+                ],
                 const SizedBox(height: 20),
                 _BackupDatabases(),
                 const SizedBox(height: 18),
@@ -889,6 +920,21 @@ class _BackupDatabases extends StatelessWidget {
                         'Backup ${index + 1}',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        final list = [...app.syncSettings.backupDatabases];
+                        final oldPrimary = app.syncSettings.database;
+                        final newPrimary = list[index];
+                        list[index] = oldPrimary;
+                        app.updateSyncSettings(
+                          app.syncSettings.copyWith(
+                            database: newPrimary,
+                            backupDatabases: list,
+                          ),
+                        );
+                      },
+                      child: const Text('Make Primary'),
                     ),
                     IconButton(
                       icon: const Icon(LucideIcons.trash2, size: 16),
@@ -2208,29 +2254,35 @@ class _SettingField extends StatefulWidget {
 
 class _SettingFieldState extends State<_SettingField> {
   late final TextEditingController _controller;
+  Timer? _debounce;
+  late String _lastSentValue;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.initialValue);
+    _lastSentValue = widget.initialValue;
   }
 
   @override
   void didUpdateWidget(covariant _SettingField oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.initialValue != widget.initialValue &&
-        _controller.text != widget.initialValue) {
-      final currentSelection = _controller.selection;
-      _controller.text = widget.initialValue;
-      if (currentSelection.isValid &&
-          currentSelection.baseOffset <= widget.initialValue.length) {
-        _controller.selection = currentSelection;
+    if (oldWidget.initialValue != widget.initialValue) {
+      if (widget.initialValue != _lastSentValue) {
+        final currentSelection = _controller.selection;
+        _controller.text = widget.initialValue;
+        _lastSentValue = widget.initialValue;
+        if (currentSelection.isValid &&
+            currentSelection.baseOffset <= widget.initialValue.length) {
+          _controller.selection = currentSelection;
+        }
       }
     }
   }
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _controller.dispose();
     super.dispose();
   }
@@ -2248,7 +2300,13 @@ class _SettingFieldState extends State<_SettingField> {
           minLines: widget.minLines,
           maxLines: widget.obscure ? 1 : widget.maxLines,
           decoration: InputDecoration(hintText: widget.hint),
-          onChanged: widget.onChanged,
+          onChanged: (value) {
+            if (_debounce?.isActive ?? false) _debounce!.cancel();
+            _debounce = Timer(const Duration(milliseconds: 500), () {
+              _lastSentValue = value;
+              widget.onChanged(value);
+            });
+          },
         ),
       ],
     );

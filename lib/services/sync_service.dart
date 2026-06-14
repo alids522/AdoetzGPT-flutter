@@ -5,6 +5,7 @@ import 'package:bcrypt/bcrypt.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:postgres/postgres.dart' as pg;
+import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 import 'package:uuid/uuid.dart';
 
 import '../models.dart';
@@ -29,6 +30,29 @@ class SyncService {
     String password,
     SyncSettings settings,
   ) async {
+    if (settings.useSupabase) {
+      final client = supa.SupabaseClient(
+        settings.supabaseUrl, 
+        settings.supabaseAnonKey,
+        authOptions: const supa.FlutterAuthClientOptions(
+          localStorage: supa.EmptyLocalStorage(),
+          authFlowType: supa.AuthFlowType.implicit,
+        ),
+      );
+      final res = await client.auth.signUp(email: username, password: password);
+      if (res.user == null || res.session == null) {
+        throw Exception('Supabase signup failed. Please ensure you provide a valid email format.');
+      }
+      return AuthResult(
+        user: UserAccount(
+          id: res.user!.id,
+          username: username,
+          displayName: username.split('@').first,
+        ),
+        token: res.session!.accessToken,
+      );
+    }
+
     if (shouldUseDirectPostgres(settings)) {
       return _directSignUp(username, password, settings.database);
     }
@@ -56,6 +80,41 @@ class SyncService {
     String password,
     SyncSettings settings,
   ) async {
+    if (settings.useSupabase) {
+      final client = supa.SupabaseClient(
+        settings.supabaseUrl, 
+        settings.supabaseAnonKey,
+        authOptions: const supa.FlutterAuthClientOptions(
+          localStorage: supa.EmptyLocalStorage(),
+          authFlowType: supa.AuthFlowType.implicit,
+        ),
+      );
+      final res = await client.auth.signInWithPassword(email: username, password: password);
+      if (res.user == null || res.session == null) {
+        throw Exception('Supabase login failed.');
+      }
+      
+      PersistedAppState? remoteState;
+      try {
+        final stateRes = await client.from('app_states').select().eq('id', res.user!.id).maybeSingle();
+        if (stateRes != null && stateRes['state'] != null) {
+          remoteState = PersistedAppState.fromJson(Map<String, dynamic>.from(stateRes['state']));
+        }
+      } catch (e) {
+        debugPrint('Failed to pull initial state from Supabase: $e');
+      }
+
+      return AuthResult(
+        user: UserAccount(
+          id: res.user!.id,
+          username: username,
+          displayName: username.split('@').first,
+        ),
+        token: res.session!.accessToken,
+        remoteState: remoteState,
+      );
+    }
+
     if (shouldUseDirectPostgres(settings)) {
       return _directLogin(username, password, settings.database);
     }
@@ -83,6 +142,24 @@ class SyncService {
     SyncSettings settings,
   ) async {
     if (!settings.enabled || token.isEmpty) return null;
+    
+    if (settings.useSupabase) {
+      final client = supa.SupabaseClient(
+        settings.supabaseUrl, 
+        settings.supabaseAnonKey,
+        headers: {'Authorization': 'Bearer $token'},
+        authOptions: const supa.FlutterAuthClientOptions(
+          localStorage: supa.EmptyLocalStorage(),
+          authFlowType: supa.AuthFlowType.implicit,
+        ),
+      );
+      final res = await client.from('app_states').select();
+      if (res.isNotEmpty && res.first['state'] != null) {
+        return PersistedAppState.fromJson(Map<String, dynamic>.from(res.first['state']));
+      }
+      return null;
+    }
+
     if (shouldUseDirectPostgres(settings)) {
       return _directPullState(token, settings.database);
     }
@@ -102,53 +179,89 @@ class SyncService {
         : null;
   }
 
-  Future<void> pushRemoteState(PersistedAppState state) async {
-    if (state.currentUser == null ||
-        state.authToken.isEmpty ||
-        !state.syncSettings.enabled) {
-      return;
-    }
-    if (shouldUseDirectPostgres(state.syncSettings)) {
-      await _directPushState(
-        state.authToken,
-        state.syncSettings.database,
-        state,
-      );
-      if (state.syncSettings.autoSyncBackups) {
-        for (final db in state.syncSettings.backupDatabases) {
-          if (db.databaseUrl.trim().isEmpty || db.database.trim().isEmpty) {
-            continue;
-          }
-          try {
-            await _directPushState(state.authToken, db, state);
-          } catch (_) {}
-        }
-      }
-      return;
-    }
+  Future<void> pushRemoteState(PersistedAppState state, SyncSettings settings) async {
+    if (!settings.enabled || state.authToken.isEmpty) return;
+    final token = state.authToken;
+    
+    bool pushSuccess = false;
 
-    Future<void> pushToDb(DatabaseSettings db) async {
-      final response = await _putJson(
-        state.syncSettings,
-        '/api/sync/state',
-        {'state': _remoteStateJson(state), 'dbConfig': _databasePayload(db)},
-        headers: {'Authorization': 'Bearer ${state.authToken}'},
+    if (settings.useSupabase) {
+      final client = supa.SupabaseClient(
+        settings.supabaseUrl, 
+        settings.supabaseAnonKey, 
+        headers: {'Authorization': 'Bearer $token'},
+        authOptions: const supa.FlutterAuthClientOptions(
+          localStorage: supa.EmptyLocalStorage(),
+          authFlowType: supa.AuthFlowType.implicit,
+        ),
+      );
+      final userId = state.currentUser?.id;
+      if (userId == null) return;
+      
+      await client.from('app_states').upsert({
+        'id': userId,
+        'state': state.toJson(includeSecrets: true),
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      });
+      pushSuccess = true;
+    } else if (shouldUseDirectPostgres(settings)) {
+      await _directPushState(token, state, settings.database);
+      pushSuccess = true;
+    } else {
+      final response = await _postJson(
+        settings,
+        '/api/sync/state/push',
+        {
+          'state': _remoteStateJson(state),
+          'dbConfig': _databasePayload(settings.database),
+        },
+        headers: {'Authorization': 'Bearer $token'},
       );
       final data = _readJson(response);
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception(data['error'] ?? 'Unable to sync state.');
+        throw Exception(data['error'] ?? 'Unable to push remote state.');
       }
+      pushSuccess = true;
     }
 
-    await pushToDb(state.syncSettings.database);
-    if (state.syncSettings.autoSyncBackups) {
-      for (final db in state.syncSettings.backupDatabases) {
-        if (db.databaseUrl.trim().isEmpty || db.database.trim().isEmpty) {
-          continue;
-        }
+    if (pushSuccess && settings.autoSyncBackups) {
+      for (final db in settings.backupDatabases) {
+        if (db.databaseUrl.trim().isEmpty || db.database.trim().isEmpty) continue;
         try {
-          await pushToDb(db);
-        } catch (_) {}
+          if (settings.useSupabase) {
+            await _directPushStateWithClonedUser(
+              token: token,
+              state: state,
+              backupDb: db,
+              clonedUserId: state.currentUser!.id,
+              clonedUsername: state.currentUser!.username,
+              clonedPasswordHash: r'$2a$10$XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', // Dummy bcrypt hash
+            );
+          } else if (shouldUseDirectPostgres(settings)) {
+            final primaryConn = await _open(settings.database);
+            try {
+              final userRow = await primaryConn.execute(
+                pg.Sql('SELECT id, username, password_hash FROM ${_quote(_schema(settings.database))}.users WHERE id = \$1'),
+                parameters: [state.currentUser?.id],
+              ).then((r) => r.firstOrNull);
+              
+              if (userRow == null) return;
+              
+              await _directPushStateWithClonedUser(
+                token: token,
+                state: state,
+                backupDb: db,
+                clonedUserId: userRow[0] as String,
+                clonedUsername: userRow[1] as String,
+                clonedPasswordHash: userRow[2] as String,
+              );
+            } finally {
+              await primaryConn.close();
+            }
+          }
+        } catch (e) {
+          debugPrint('Backup push failed for ${db.databaseUrl}: $e');
+        }
       }
     }
   }
@@ -195,24 +308,6 @@ class SyncService {
     }
   }
 
-  Future<http.Response> _putJson(
-    SyncSettings settings,
-    String path,
-    Map<String, dynamic> body, {
-    Map<String, String> headers = const {},
-  }) async {
-    try {
-      return await http
-          .put(
-            _apiUri(settings, path),
-            headers: {'Content-Type': 'application/json', ...headers},
-            body: jsonEncode(body),
-          )
-          .timeout(const Duration(seconds: 30));
-    } catch (error) {
-      throw Exception(_syncApiNetworkMessage(settings, error));
-    }
-  }
 
   String _syncApiNetworkMessage(SyncSettings settings, Object error) {
     final apiBaseUrl = _apiBaseUrl(settings);
@@ -239,9 +334,7 @@ class SyncService {
   Map<String, dynamic> _databasePayload(DatabaseSettings db) => {
     'databaseUrl': db.databaseUrl.trim(),
     'database': db.database.trim(),
-    'schemaName': db.schemaName.trim().isEmpty
-        ? 'adoetzgpt'
-        : db.schemaName.trim(),
+    'schemaName': db.schemaName.trim(),
     'user': db.user.trim(),
     'password': db.password,
     'port': db.port.trim(),
@@ -371,17 +464,62 @@ class SyncService {
     }
   }
 
+  Future<void> _directPushStateWithClonedUser({
+    required String token,
+    required PersistedAppState state,
+    required DatabaseSettings backupDb,
+    required String clonedUserId,
+    required String clonedUsername,
+    required String clonedPasswordHash,
+  }) async {
+    final conn = await _open(backupDb);
+    try {
+      final schema = _schema(backupDb);
+      await _ensurePostgres(conn, schema);
+
+      await conn.execute(
+        pg.Sql.named(
+          'INSERT INTO ${_quote(schema)}."users" (id, username, password_hash, display_name) '
+          'VALUES (@id, @username, @passwordHash, @username) '
+          'ON CONFLICT (id) DO UPDATE SET username = @username, updated_at = CURRENT_TIMESTAMP',
+        ),
+        parameters: {
+          'id': clonedUserId,
+          'username': clonedUsername,
+          'passwordHash': clonedPasswordHash,
+        },
+      );
+
+      final stateJson = jsonEncode(state.toJson(includeSecrets: true));
+      await conn.execute(
+        pg.Sql.named(
+          'INSERT INTO ${_quote(schema)}."app_states" (user_id, state) '
+          'VALUES (@id, @state::jsonb) '
+          'ON CONFLICT (user_id) DO UPDATE SET state = @state::jsonb, updated_at = CURRENT_TIMESTAMP',
+        ),
+        parameters: {
+          'id': clonedUserId,
+          'state': stateJson,
+        },
+      );
+    } finally {
+      await conn.close();
+    }
+  }
+
   Future<void> _directPushState(
     String token,
-    DatabaseSettings db,
     PersistedAppState state,
+    DatabaseSettings db,
   ) async {
     final userId = _directUserId(token);
     if (userId.isEmpty) throw Exception('Invalid direct Postgres auth token.');
+
     final conn = await _open(db);
     try {
       final schema = _schema(db);
       await _ensurePostgres(conn, schema);
+      
       await conn.execute(
         pg.Sql(
           'INSERT INTO ${_quote(schema)}.app_states (user_id, state, updated_at) VALUES (\$1, \$2::jsonb, NOW()) '
@@ -394,18 +532,23 @@ class SyncService {
     }
   }
 
-  Future<pg.Connection> _open(DatabaseSettings db) {
+  Future<pg.Connection> _open(DatabaseSettings db) async {
     if (db.databaseUrl.trim().isEmpty ||
         db.database.trim().isEmpty ||
         db.user.trim().isEmpty) {
       throw Exception('Postgres settings are required.');
     }
+    final needsSsl = db.databaseUrl.contains('supabase') ||
+        db.databaseUrl.contains('neon.tech') ||
+        db.databaseUrl.contains('render.com') ||
+        db.databaseUrl.contains('sslmode=require');
+
     final port = int.tryParse(db.port.trim()) ?? 5432;
     final host = db.databaseUrl.trim();
     if (host.startsWith('postgres://') || host.startsWith('postgresql://')) {
       return pg.Connection.openFromUrl(_postgresUrlWithOverrides(host, db));
     }
-    return pg.Connection.open(
+    return await pg.Connection.open(
       pg.Endpoint(
         host: host,
         database: db.database.trim(),
@@ -413,7 +556,9 @@ class SyncService {
         password: db.password,
         port: port,
       ),
-      settings: const pg.ConnectionSettings(sslMode: pg.SslMode.disable),
+      settings: pg.ConnectionSettings(
+        sslMode: needsSsl ? pg.SslMode.require : pg.SslMode.disable,
+      ),
     );
   }
 
