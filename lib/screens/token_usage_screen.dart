@@ -295,7 +295,7 @@ class _TokenUsageScreenState extends State<TokenUsageScreen> {
         _ModelUsageBreakdown(records: filtered),
         const SizedBox(height: 24),
         _CustomCounters(
-          filteredAll: app.tokenUsageData,
+          filteredAll: filtered,
           selectedModel: selectedModel,
           selectedEndpoint: selectedEndpoint,
           colors: colors,
@@ -1115,10 +1115,7 @@ class _CustomCounters extends StatelessWidget {
 
   _CounterStats _counterStats(CustomCounter counter) {
     final data = filteredAll.where(
-      (item) =>
-          item.timestamp >= counter.createdAt &&
-          (selectedModel == 'all' || item.model == selectedModel) &&
-          (selectedEndpoint == 'all' || item.endpoint == selectedEndpoint),
+      (item) => item.timestamp >= counter.createdAt,
     );
     final stats = _CounterStats();
     for (final item in data) {
@@ -1134,12 +1131,7 @@ class _CustomCounters extends StatelessWidget {
 
   List<_EndpointUsageStat> _counterModelStats(CustomCounter counter, AdoetzAppState app) {
     return _endpointModelStats(
-      filteredAll.where(
-        (item) =>
-            item.timestamp >= counter.createdAt &&
-            (selectedModel == 'all' || item.model == selectedModel) &&
-            (selectedEndpoint == 'all' || item.endpoint == selectedEndpoint),
-      ),
+      filteredAll.where((item) => item.timestamp >= counter.createdAt),
       app,
     );
   }

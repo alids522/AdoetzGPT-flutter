@@ -1150,6 +1150,7 @@ class VoiceSettings {
     this.textPersonality = 'Assistant',
     this.customTextPersonality = '',
     this.customVoicePersonalities = const [],
+    this.liveModel = '',
     this.customTextPersonalities = const [],
   });
 
@@ -1160,6 +1161,7 @@ class VoiceSettings {
   final String customTextPersonality;
   final List<CustomPersonality> customVoicePersonalities;
   final List<CustomPersonality> customTextPersonalities;
+  final String liveModel;
 
   VoiceSettings copyWith({
     String? voice,
@@ -1169,6 +1171,7 @@ class VoiceSettings {
     String? customTextPersonality,
     List<CustomPersonality>? customVoicePersonalities,
     List<CustomPersonality>? customTextPersonalities,
+    String? liveModel,
   }) {
     return VoiceSettings(
       voice: voice ?? this.voice,
@@ -1181,6 +1184,7 @@ class VoiceSettings {
           customVoicePersonalities ?? this.customVoicePersonalities,
       customTextPersonalities:
           customTextPersonalities ?? this.customTextPersonalities,
+      liveModel: liveModel ?? this.liveModel,
     );
   }
 
@@ -1198,6 +1202,7 @@ class VoiceSettings {
       customTextPersonalities: mapList(
         json['customTextPersonalities'],
       ).map(CustomPersonality.fromJson).toList(),
+      liveModel: stringValue(json['liveModel']),
     );
   }
 
@@ -1213,6 +1218,7 @@ class VoiceSettings {
     'customTextPersonalities': customTextPersonalities
         .map((item) => item.toJson())
         .toList(),
+    'liveModel': liveModel,
   };
 }
 

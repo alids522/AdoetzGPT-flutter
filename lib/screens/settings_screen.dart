@@ -22,6 +22,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final guestUser = TextEditingController();
   final guestPass = TextEditingController();
   bool savingGuest = false;
+  String _selectedCategory = 'General';
+
+  final _categories = const [
+    'General',
+    'AI & Generation',
+    'Voice & Live',
+    'Integrations',
+    'Sync & Data',
+  ];
 
   @override
   void dispose() {
@@ -72,35 +81,71 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              const SizedBox(height: 28),
-              _ProfileSection(copy: copy),
-              const SizedBox(height: 22),
-              const _ExperienceSection(),
-              const SizedBox(height: 22),
-              const _MemorySection(),
-              const SizedBox(height: 22),
-              const _TitleGenerationSection(),
-              const SizedBox(height: 22),
-              _SyncSection(
-                guestUser: guestUser,
-                guestPass: guestPass,
-                savingGuest: savingGuest,
-                onSavingGuest: (value) => setState(() => savingGuest = value),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: _categories.map((category) {
+                    final selected = category == _selectedCategory;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(category),
+                        selected: selected,
+                        onSelected: (value) {
+                          if (value) setState(() => _selectedCategory = category);
+                        },
+                        selectedColor: p.primary.withValues(alpha: 0.2),
+                        labelStyle: TextStyle(
+                          color: selected ? p.primary : p.onSurfaceVariant,
+                          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                        ),
+                        backgroundColor: p.surface,
+                        side: BorderSide(
+                          color: selected ? p.primary : p.outline,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
               ),
-              const SizedBox(height: 22),
-              _ApiSection(copy: copy),
-              const SizedBox(height: 22),
-              _EndpointSection(copy: copy),
-              const SizedBox(height: 22),
-              const _ModelCostsSection(),
-              const SizedBox(height: 22),
-              const _ConnectorSection(),
-              const SizedBox(height: 22),
-              _VoiceSection(copy: copy),
-              const SizedBox(height: 22),
-              const _WebSearchSection(),
-              const SizedBox(height: 22),
-              const _MediaSection(),
+              const SizedBox(height: 28),
+              if (_selectedCategory == 'General') ...[
+                _ProfileSection(copy: copy),
+                const SizedBox(height: 22),
+                const _ExperienceSection(),
+              ],
+              if (_selectedCategory == 'AI & Generation') ...[
+                const _MemorySection(),
+                const SizedBox(height: 22),
+                const _TitleGenerationSection(),
+                const SizedBox(height: 22),
+                _EndpointSection(copy: copy),
+                const SizedBox(height: 22),
+                const _ModelCostsSection(),
+              ],
+              if (_selectedCategory == 'Integrations') ...[
+                _ApiSection(copy: copy),
+                const SizedBox(height: 22),
+                const _ConnectorSection(),
+                const SizedBox(height: 22),
+                const _WebSearchSection(),
+              ],
+              if (_selectedCategory == 'Voice & Live') ...[
+                _VoiceSection(copy: copy),
+                const SizedBox(height: 22),
+                const _MediaSection(),
+              ],
+              if (_selectedCategory == 'Sync & Data') ...[
+                _SyncSection(
+                  guestUser: guestUser,
+                  guestPass: guestPass,
+                  savingGuest: savingGuest,
+                  onSavingGuest: (value) => setState(() => savingGuest = value),
+                ),
+              ],
               const SizedBox(height: 30),
               _ActionBar(copy: copy),
             ],
@@ -1820,6 +1865,15 @@ class _VoiceSection extends StatelessWidget {
             accent: Colors.teal,
           ),
           const SizedBox(height: 18),
+          _SettingField(
+            label: 'Live Model (Override)',
+            initialValue: app.voiceSettings.liveModel,
+            hint: 'e.g. gemini-3.1-flash-live-preview',
+            onChanged: (value) => app.updateVoiceSettings(
+              app.voiceSettings.copyWith(liveModel: value),
+            ),
+          ),
+          const SizedBox(height: 12),
           _DropdownSetting(
             label: 'Voice',
             value: app.voiceSettings.voice,

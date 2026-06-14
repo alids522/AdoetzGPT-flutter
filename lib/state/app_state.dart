@@ -349,14 +349,18 @@ class AdoetzAppState extends ChangeNotifier {
     }
     mergedUsage.sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
+    final remoteIsNewer = (remote.savedAt ?? 0) >= (local.savedAt ?? 0);
+
     final counterMap = <String, CustomCounter>{
       for (final counter in local.customCounters) counter.id: counter,
     };
     for (final counter in remote.customCounters) {
-      counterMap.putIfAbsent(counter.id, () => counter);
+      if (remoteIsNewer) {
+        counterMap[counter.id] = counter;
+      } else {
+        counterMap.putIfAbsent(counter.id, () => counter);
+      }
     }
-
-    final remoteIsNewer = (remote.savedAt ?? 0) >= (local.savedAt ?? 0);
 
     return PersistedAppState(
       currentUser: local.currentUser,
@@ -2334,7 +2338,9 @@ class AdoetzAppState extends ChangeNotifier {
 
   List<String> _liveModelCandidates() {
     final selected = selectedModel.trim();
+    final customLive = voiceSettings.liveModel.trim();
     final candidates = [
+      if (customLive.isNotEmpty) customLive,
       if (_isLiveCapableModel(selected)) selected,
       'gemini-3.1-flash-live-preview',
       'gemini-2.5-flash-native-audio-preview-12-2025',
