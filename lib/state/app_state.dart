@@ -2419,15 +2419,20 @@ class AdoetzAppState extends ChangeNotifier {
     _dirtySettings = false;
     try {
       final remote = await _sync.pullRemoteState(authToken, syncSettings);
+      
+      // Grab a fresh snapshot of the state AFTER the network request
+      // so we don't accidentally overwrite changes that happened while waiting!
+      final currentLocal = buildState(); 
+
       if (remote != null) {
         changedSessionIds.addAll(
-          _localSessionIdsToPush(localBeforePull, remote),
+          _localSessionIdsToPush(currentLocal, remote),
         );
         pushSettings = pushSettings ||
-            (localBeforePull.savedAt ?? 0) > (remote.savedAt ?? 0);
-        await _applyRemoteSyncState(_mergeRemote(localBeforePull, remote));
+            (currentLocal.savedAt ?? 0) > (remote.savedAt ?? 0);
+        await _applyRemoteSyncState(_mergeRemote(currentLocal, remote));
       } else {
-        changedSessionIds.addAll(_localSessionIdsToPush(localBeforePull, null));
+        changedSessionIds.addAll(_localSessionIdsToPush(currentLocal, null));
         pushSettings = true;
       }
       await _sync.pushRemoteState(
