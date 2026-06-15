@@ -1,5 +1,9 @@
 import 'dart:convert';
 
+import 'package:uuid/uuid.dart';
+
+const _idGenerator = Uuid();
+
 enum AppView { chat, settings, tokenUsage }
 
 enum AppLanguage { en, id }
@@ -415,7 +419,7 @@ class Session {
     final now = DateTime.now().millisecondsSinceEpoch;
     final effectiveTargetId = targetId ?? '';
     return Session(
-      id: id ?? now.toString(),
+      id: id ?? 'session-${_idGenerator.v4()}',
       title: effectiveTargetId.startsWith('agent:')
           ? 'New Agent Chat'
           : 'New Chat',
@@ -1723,7 +1727,10 @@ class PersistedAppState {
     );
   }
 
-  factory PersistedAppState.fromJson(Map<String, dynamic> json) {
+  factory PersistedAppState.fromJson(
+    Map<String, dynamic> json, {
+    bool allowEmptySessions = false,
+  }) {
     final sessions = mapList(json['sessions']).map(Session.fromJson).toList();
     final defaults = PersistedAppState.defaults();
     return PersistedAppState(
@@ -1772,10 +1779,14 @@ class PersistedAppState {
             ? Map<String, dynamic>.from(json['voiceSettings'])
             : null,
       ),
-      sessions: sessions.isEmpty ? defaults.sessions : sessions,
+      sessions: sessions.isEmpty && !allowEmptySessions
+          ? defaults.sessions
+          : sessions,
       currentSessionId: stringValue(
         json['currentSessionId'],
-        sessions.isEmpty ? defaults.currentSessionId : sessions.first.id,
+        sessions.isEmpty
+            ? (allowEmptySessions ? '' : defaults.currentSessionId)
+            : sessions.first.id,
       ),
       memories: mapList(json['memories']).map(Memory.fromJson).toList(),
       tokenUsageData: mapList(

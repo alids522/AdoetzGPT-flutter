@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:uuid/uuid.dart';
 
 import '../models.dart';
 import '../services/ai_service.dart';
@@ -16,6 +17,8 @@ import '../services/live_foreground_service.dart';
 import '../services/memory_agent.dart';
 import '../services/storage_service.dart';
 import '../services/sync_service.dart';
+
+const _idGenerator = Uuid();
 
 class AdoetzAppState extends ChangeNotifier {
   AdoetzAppState({StorageService? storage, SyncService? sync, AiService? ai})
@@ -103,6 +106,8 @@ class AdoetzAppState extends ChangeNotifier {
   List<String> geminiModels = const [];
   List<EndpointModel> endpointModels = const [];
   List<String> models = const ['gemini-2.5-flash'];
+
+  String _newId(String prefix) => '$prefix-${_idGenerator.v4()}';
 
   Future<void> _playSound(String name) async {
     if (!soundEffectsEnabled) return;
@@ -441,9 +446,11 @@ class AdoetzAppState extends ChangeNotifier {
       genSettings: remoteIsNewer ? remote.genSettings : local.genSettings,
       voiceSettings: remoteIsNewer ? remote.voiceSettings : local.voiceSettings,
       sessions: mergedSessions,
-      currentSessionId: mergedSessions.isNotEmpty
-          ? mergedSessions.first.id
-          : local.currentSessionId,
+      currentSessionId: _resolveCurrentSessionId(
+        local.currentSessionId,
+        remote.currentSessionId,
+        mergedSessions,
+      ),
       memories: mergedMemories,
       tokenUsageData: mergedUsage,
       customCounters: counterMap.values.toList(),
@@ -459,6 +466,20 @@ class AdoetzAppState extends ChangeNotifier {
       lastSyncAt: local.lastSyncAt,
       savedAt: math.max(local.savedAt ?? 0, remote.savedAt ?? 0),
     );
+  }
+
+  String _resolveCurrentSessionId(
+    String localId,
+    String remoteId,
+    List<Session> mergedSessions,
+  ) {
+    final activeIds = mergedSessions
+        .where((session) => !session.deleted)
+        .map((session) => session.id)
+        .toSet();
+    if (activeIds.contains(localId)) return localId;
+    if (activeIds.contains(remoteId)) return remoteId;
+    return mergedSessions.isNotEmpty ? mergedSessions.first.id : localId;
   }
 
   Set<String> _localSessionIdsToPush(
@@ -510,19 +531,78 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   List<Message> _mergeSessionMessages(Session primary, Session secondary) {
-    final mergedById = <String, Message>{
-      for (final message in secondary.messages) message.id: message,
-      for (final message in primary.messages) message.id: message,
-    };
-    final seen = <String>{};
     final merged = <Message>[];
+    final indexById = <String, int>{};
+    void addMessage(Message message, {required bool preferIncoming}) {
+      final existingIndex = indexById[message.id];
+      if (existingIndex == null) {
+        indexById[message.id] = merged.length;
+        merged.add(message);
+        return;
+      }
+
+      final existing = merged[existingIndex];
+      if (_isSameLogicalMessage(existing, message)) {
+        merged[existingIndex] = _preferredLogicalMessage(
+          existing,
+          message,
+          preferIncoming: preferIncoming,
+        );
+        return;
+      }
+
+      final withNewId = _copyMessageWithId(message, _newId('msg'));
+      indexById[withNewId.id] = merged.length;
+      merged.add(withNewId);
+    }
+
     for (final message in primary.messages) {
-      if (seen.add(message.id)) merged.add(mergedById[message.id]!);
+      addMessage(message, preferIncoming: true);
     }
     for (final message in secondary.messages) {
-      if (seen.add(message.id)) merged.add(mergedById[message.id]!);
+      addMessage(message, preferIncoming: false);
     }
     return merged;
+  }
+
+  bool _isSameLogicalMessage(Message a, Message b) {
+    if (a.id != b.id || a.sender != b.sender) return false;
+    if (a.isUser || a.isSystem) return a.text == b.text;
+    if (a.text.isEmpty || b.text.isEmpty) return true;
+    return a.text.contains(b.text) || b.text.contains(a.text);
+  }
+
+  Message _preferredLogicalMessage(
+    Message current,
+    Message incoming, {
+    required bool preferIncoming,
+  }) {
+    if (incoming.text.length > current.text.length) return incoming;
+    if (current.text.isEmpty && incoming.text.isNotEmpty) return incoming;
+    if (incoming.tokenCount != null && current.tokenCount == null) {
+      return incoming;
+    }
+    return preferIncoming ? incoming : current;
+  }
+
+  Message _copyMessageWithId(Message message, String id) {
+    return Message(
+      id: id,
+      text: message.text,
+      sender: message.sender,
+      timestamp: message.timestamp,
+      model: message.model,
+      attachments: message.attachments,
+      tokenCount: message.tokenCount,
+      targetId: message.targetId,
+      targetType: message.targetType,
+      targetName: message.targetName,
+      connectorId: message.connectorId,
+      modelOrAgentId: message.modelOrAgentId,
+      toolEventIds: message.toolEventIds,
+      isEstimatedTokenCount: message.isEstimatedTokenCount,
+      generationTimeMs: message.generationTimeMs,
+    );
   }
 
   List<String> _mergeStringList(List<String> primary, List<String> secondary) {
@@ -983,7 +1063,7 @@ class AdoetzAppState extends ChangeNotifier {
     }
 
     final switchEvent = TargetSwitchEvent(
-      id: 'switch-${now.microsecondsSinceEpoch}',
+      id: _newId('switch'),
       chatId: session.id,
       fromTargetId: previous.id,
       toTargetId: target.id,
@@ -994,7 +1074,7 @@ class AdoetzAppState extends ChangeNotifier {
       ...session.messages,
       if (shouldInsertDivider)
         Message(
-          id: 'switch-${now.microsecondsSinceEpoch}',
+          id: _newId('msg'),
           text:
               'Switched from ${formatTargetName(previous.displayName)} to ${formatTargetName(target.displayName)}',
           sender: 'system',
@@ -1604,9 +1684,10 @@ class AdoetzAppState extends ChangeNotifier {
     );
     final now = DateTime.now();
     final history = _historyForRequest(session);
-    final botId = (now.millisecondsSinceEpoch + 1).toString();
+    final userMessageId = _newId('msg');
+    final botId = _newId('msg');
     final modelForRequest = request.model;
-    final generationId = '${now.microsecondsSinceEpoch}-$botId';
+    final generationId = _newId('gen');
 
     _cancelStreamFlush(generationId: generationId, resetText: true);
     _stopRequestedGenerations.remove(generationId);
@@ -1620,7 +1701,7 @@ class AdoetzAppState extends ChangeNotifier {
       }
     });
     final userMessage = Message(
-      id: now.millisecondsSinceEpoch.toString(),
+      id: userMessageId,
       text: prompt.trim(),
       sender: 'user',
       timestamp: DateFormat('hh:mm a').format(now),
@@ -2444,19 +2525,43 @@ class AdoetzAppState extends ChangeNotifier {
   }) {
     final session = sessions.where((item) => item.id == sessionId).firstOrNull;
     if (session == null) return;
+    var found = false;
     final messages = session.messages
         .map(
-          (message) => message.id == botId
-              ? message.copyWith(
-                  text: text,
-                  tokenCount: tokenCount,
-                  isEstimatedTokenCount: isEstimatedTokenCount,
-                  generationTimeMs: generationTimeMs,
-                  toolEventIds: toolEventIds,
-                )
-              : message,
+          (message) {
+            if (message.id != botId) return message;
+            found = true;
+            return message.copyWith(
+              text: text,
+              tokenCount: tokenCount,
+              isEstimatedTokenCount: isEstimatedTokenCount,
+              generationTimeMs: generationTimeMs,
+              toolEventIds: toolEventIds,
+            );
+          },
         )
         .toList();
+    if (!found && text.trim().isNotEmpty) {
+      final target = activeChatTarget;
+      messages.add(
+        Message(
+          id: botId,
+          text: text,
+          sender: 'bot',
+          timestamp: DateFormat('hh:mm a').format(DateTime.now()),
+          model: target.modelId ?? selectedModel,
+          tokenCount: tokenCount,
+          targetId: target.id,
+          targetType: target.type,
+          targetName: target.displayName,
+          connectorId: target.connectorId,
+          modelOrAgentId: target.modelId,
+          toolEventIds: toolEventIds ?? const [],
+          isEstimatedTokenCount: isEstimatedTokenCount ?? true,
+          generationTimeMs: generationTimeMs,
+        ),
+      );
+    }
     _replaceSession(
       sessionId,
       session.copyWith(
@@ -2486,8 +2591,7 @@ class AdoetzAppState extends ChangeNotifier {
         : messages.indexWhere((message) => message.id == activeId);
 
     if (index == -1) {
-      final id =
-          'live-$sender-${now.microsecondsSinceEpoch}-${messages.length}';
+      final id = _newId('live-$sender');
       if (isUser) {
         _liveUserMessageId = id;
         if (finished) _maybeSaveUserMemory(clean);
@@ -2865,6 +2969,7 @@ class AdoetzAppState extends ChangeNotifier {
 
   Future<void> _pullRemoteStateInForeground() async {
     if (_remotePullInFlight || _applyingRemoteSync) return;
+    if (generatingSessionIds.isNotEmpty) return;
     if (currentUser == null ||
         currentUser!.isGuest ||
         authToken.isEmpty ||
@@ -2913,6 +3018,7 @@ class AdoetzAppState extends ChangeNotifier {
     if (_applyingRemoteSync || currentUser == null || currentUser!.isGuest) {
       return;
     }
+    if (generatingSessionIds.contains(remoteSession.id)) return;
     final existingIndex = sessions.indexWhere(
       (session) => session.id == remoteSession.id,
     );
@@ -3005,14 +3111,32 @@ class AdoetzAppState extends ChangeNotifier {
     _remoteSyncTimer?.cancel();
     _remoteSyncTimer = Timer(const Duration(seconds: 2), () async {
       final changedSessionIds = Set<String>.from(_dirtySessionIds);
-      final pushSettings = _dirtySettings;
+      var pushSettings = _dirtySettings;
       _dirtySessionIds.clear();
       _dirtySettings = false;
       try {
         syncStatus = 'Syncing to remote...';
         notifyListeners();
+        var stateForPush = buildState();
+        if (changedSessionIds.isNotEmpty) {
+          final localBeforePush = stateForPush;
+          final remote = await _sync
+              .pullRemoteState(authToken, syncSettings)
+              .timeout(const Duration(seconds: 8));
+          if (remote != null) {
+            changedSessionIds.addAll(
+              _localSessionIdsToPush(localBeforePush, remote),
+            );
+            pushSettings = pushSettings ||
+                (localBeforePush.savedAt ?? 0) > (remote.savedAt ?? 0);
+            await _applyRemoteSyncState(
+              _mergeRemote(localBeforePush, remote),
+            );
+            stateForPush = buildState();
+          }
+        }
         await _sync.pushRemoteState(
-          buildState(),
+          stateForPush,
           syncSettings,
           lastSyncAt: lastSyncAt,
           changedSessionIds: changedSessionIds,

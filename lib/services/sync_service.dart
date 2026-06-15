@@ -234,7 +234,10 @@ class SyncService {
               final row = payload.newRecord.isNotEmpty
                   ? payload.newRecord
                   : payload.oldRecord;
-              final remote = _stateFromValue(row['state']);
+              final remote = _stateFromValue(
+                row['state'],
+                allowEmptySessions: true,
+              );
               if (remote != null) onSettings(remote);
             } catch (error) {
               onError?.call(error);
@@ -928,9 +931,17 @@ CREATE TABLE IF NOT EXISTS $q.chat_sessions (
     );
   }
 
-  PersistedAppState? _stateFromValue(Object? value) {
+  PersistedAppState? _stateFromValue(
+    Object? value, {
+    bool allowEmptySessions = false,
+  }) {
     final map = _jsonMapFromValue(value);
-    return map == null ? null : PersistedAppState.fromJson(map);
+    return map == null
+        ? null
+        : PersistedAppState.fromJson(
+            map,
+            allowEmptySessions: allowEmptySessions,
+          );
   }
 
   Map<String, dynamic>? _jsonMapFromValue(Object? value) {
