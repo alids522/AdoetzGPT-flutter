@@ -369,7 +369,14 @@ class AdoetzAppState extends ChangeNotifier {
     return PersistedAppState(
       currentUser: local.currentUser,
       authToken: local.authToken,
-      syncSettings: local.syncSettings,
+      syncSettings: local.syncSettings.copyWith(
+        backupDatabases: remoteIsNewer 
+            ? remote.syncSettings.backupDatabases 
+            : local.syncSettings.backupDatabases,
+        autoSyncBackups: remoteIsNewer 
+            ? remote.syncSettings.autoSyncBackups 
+            : local.syncSettings.autoSyncBackups,
+      ),
       language: remoteIsNewer ? remote.language : local.language,
       theme: remoteIsNewer ? remote.theme : local.theme,
       visualTheme: remoteIsNewer ? remote.visualTheme : local.visualTheme,
@@ -599,7 +606,7 @@ class AdoetzAppState extends ChangeNotifier {
       authToken = result.token;
       userName = result.user.label;
       syncSettings = nextSync;
-      unawaited(_sync.pushRemoteState(buildState(), nextSync));
+      unawaited(_sync.pushRemoteState(buildState(), nextSync, lastSyncAt: lastSyncAt));
     }
     syncStatus = signUp
         ? 'Account created. Local data synced to workspace.'
@@ -638,7 +645,7 @@ class AdoetzAppState extends ChangeNotifier {
     authToken = result.token;
     userName = result.user.label;
     syncSettings = syncSettings.copyWith(enabled: true);
-    await _sync.pushRemoteState(buildState(), syncSettings);
+    await _sync.pushRemoteState(buildState(), syncSettings, lastSyncAt: lastSyncAt);
     lastSyncAt = DateTime.now().millisecondsSinceEpoch;
     syncStatus = 'Guest session saved and synced to database.';
     notifyListeners();
@@ -662,7 +669,7 @@ class AdoetzAppState extends ChangeNotifier {
       syncStatus = 'Account connected. Pushing local data...';
       notifyListeners();
       
-      await _sync.pushRemoteState(buildState(), syncSettings);
+      await _sync.pushRemoteState(buildState(), syncSettings, lastSyncAt: lastSyncAt);
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
       syncStatus = 'Successfully migrated to Supabase.';
     } catch (error) {
@@ -2141,7 +2148,7 @@ class AdoetzAppState extends ChangeNotifier {
       if (remote != null) {
         _applyState(_mergeRemote(buildState(), remote), notify: false);
       }
-      await _sync.pushRemoteState(buildState(), syncSettings);
+      await _sync.pushRemoteState(buildState(), syncSettings, lastSyncAt: lastSyncAt);
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
       syncStatus = 'Successfully synced to database.';
     } catch (error) {
@@ -2627,7 +2634,7 @@ class AdoetzAppState extends ChangeNotifier {
       try {
         syncStatus = 'Syncing to remote...';
         notifyListeners();
-        await _sync.pushRemoteState(buildState(), syncSettings);
+        await _sync.pushRemoteState(buildState(), syncSettings, lastSyncAt: lastSyncAt);
         lastPushedHash = stateHash;
         lastSyncAt = DateTime.now().millisecondsSinceEpoch;
         syncStatus = 'Successfully synced to database.';
