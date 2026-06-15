@@ -1686,7 +1686,7 @@ class PersistedAppState {
   final int? savedAt;
 
   factory PersistedAppState.defaults() {
-    final session = Session.empty('1');
+    final session = Session.empty();
     return PersistedAppState(
       currentUser: null,
       authToken: '',

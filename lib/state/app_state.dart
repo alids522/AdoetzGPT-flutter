@@ -94,8 +94,8 @@ class AdoetzAppState extends ChangeNotifier {
   List<AgentConnector> agentConnectors = const [];
   GenerationSettings genSettings = const GenerationSettings();
   VoiceSettings voiceSettings = const VoiceSettings();
-  List<Session> sessions = [Session.empty('1', 'model:gemini-2.5-flash')];
-  String currentSessionId = '1';
+  List<Session> sessions = [Session.empty(null, 'model:gemini-2.5-flash')];
+  String currentSessionId = '';
   List<Memory> memories = const [];
   List<TokenUsageRecord> tokenUsageData = const [];
   List<CustomCounter> customCounters = const [];
@@ -132,7 +132,7 @@ class AdoetzAppState extends ChangeNotifier {
             .firstOrNull ??
         (activeSessions.isNotEmpty
             ? activeSessions.first
-            : Session.empty('default', selectedTargetId));
+            : Session.empty(null, selectedTargetId));
   }
 
   bool get isDark => theme == 'dark';
@@ -331,7 +331,7 @@ class AdoetzAppState extends ChangeNotifier {
     genSettings = state.genSettings;
     voiceSettings = state.voiceSettings;
     sessions = state.sessions.isEmpty
-        ? [Session.empty('1', selectedTargetId)]
+        ? [Session.empty(null, selectedTargetId)]
         : state.sessions;
     currentSessionId = state.currentSessionId;
     memories = state.memories;
@@ -904,7 +904,7 @@ class AdoetzAppState extends ChangeNotifier {
     syncStatus = '';
     
     // Clear all local data so it doesn't leak into the next login/guest session
-    final session = Session.empty('1', 'model:gemini-2.5-flash');
+    final session = Session.empty(null, 'model:gemini-2.5-flash');
     sessions = [session];
     currentSessionId = session.id;
     memories = const [];
