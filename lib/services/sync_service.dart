@@ -144,6 +144,9 @@ class SyncService {
     if (!settings.enabled || token.isEmpty) return null;
     
     if (settings.useSupabase) {
+      if (token.startsWith('direct:')) {
+        throw Exception('Your current session is from Postgres. Please log out and sign in to Supabase to sync.');
+      }
       final client = supa.SupabaseClient(
         settings.supabaseUrl, 
         settings.supabaseAnonKey,
@@ -161,6 +164,9 @@ class SyncService {
     }
 
     if (shouldUseDirectPostgres(settings)) {
+      if (!token.startsWith('direct:')) {
+        throw Exception('Your current session is from Supabase. Please log out and sign in to Postgres to sync.');
+      }
       return _directPullState(token, settings.database);
     }
 
@@ -186,6 +192,9 @@ class SyncService {
     bool pushSuccess = false;
 
     if (settings.useSupabase) {
+      if (token.startsWith('direct:')) {
+        throw Exception('Your current session is from Postgres. Please log out and sign in to Supabase to sync.');
+      }
       final client = supa.SupabaseClient(
         settings.supabaseUrl, 
         settings.supabaseAnonKey, 
@@ -205,6 +214,9 @@ class SyncService {
       });
       pushSuccess = true;
     } else if (shouldUseDirectPostgres(settings)) {
+      if (!token.startsWith('direct:')) {
+        throw Exception('Your current session is from Supabase. Please log out and sign in to Postgres to sync.');
+      }
       await _directPushState(token, state, settings.database);
       pushSuccess = true;
     } else {
@@ -226,7 +238,9 @@ class SyncService {
 
     if (pushSuccess && settings.autoSyncBackups) {
       for (final db in settings.backupDatabases) {
-        if (db.databaseUrl.trim().isEmpty || db.database.trim().isEmpty) continue;
+        if (db.databaseUrl.trim().isEmpty || db.database.trim().isEmpty) {
+          throw Exception('Backup database is missing URL or Database Name.');
+        }
         try {
           if (settings.useSupabase) {
             await _directPushStateWithClonedUser(
@@ -235,7 +249,9 @@ class SyncService {
               backupDb: db,
               clonedUserId: state.currentUser!.id,
               clonedUsername: state.currentUser!.username,
-              clonedPasswordHash: r'$2a$10$XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', // Dummy bcrypt hash
+              clonedPasswordHash: state.cachedPasswordHash != null && state.cachedPasswordHash!.isNotEmpty 
+                  ? state.cachedPasswordHash! 
+                  : r'$2a$10$XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
             );
           } else if (shouldUseDirectPostgres(settings)) {
             final primaryConn = await _open(settings.database);
@@ -245,7 +261,9 @@ class SyncService {
                 parameters: [state.currentUser?.id],
               ).then((r) => r.firstOrNull);
               
-              if (userRow == null) return;
+              if (userRow == null) {
+                throw Exception('Primary user account not found in database. Cannot clone to backup.');
+              }
               
               await _directPushStateWithClonedUser(
                 token: token,
@@ -260,7 +278,7 @@ class SyncService {
             }
           }
         } catch (e) {
-          debugPrint('Backup push failed for ${db.databaseUrl}: $e');
+          throw Exception('Backup Database Error (${db.databaseUrl}): $e');
         }
       }
     }
@@ -348,6 +366,7 @@ class SyncService {
     db['password'] = '';
     sync['database'] = db;
     json['syncSettings'] = sync;
+    json.remove('cachedPasswordHash');
     return json;
   }
 
@@ -357,10 +376,8 @@ class SyncService {
     DatabaseSettings db,
   ) async {
     final username = usernameRaw.trim().toLowerCase();
-    if (!RegExp(r'^[a-z0-9._-]{3,64}$').hasMatch(username)) {
-      throw Exception(
-        'Username must be 3-64 characters using letters, numbers, dot, dash, or underscore.',
-      );
+    if (!username.contains('@') || !username.contains('.')) {
+      throw Exception('Please provide a valid email address.');
     }
     if (password.length < 8) {
       throw Exception('Password must be at least 8 characters.');
@@ -477,11 +494,12 @@ class SyncService {
       final schema = _schema(backupDb);
       await _ensurePostgres(conn, schema);
 
-      await conn.execute(
+      final userResult = await conn.execute(
         pg.Sql.named(
           'INSERT INTO ${_quote(schema)}."users" (id, username, password_hash, display_name) '
           'VALUES (@id, @username, @passwordHash, @username) '
-          'ON CONFLICT (id) DO UPDATE SET username = @username, updated_at = CURRENT_TIMESTAMP',
+          'ON CONFLICT (username) DO UPDATE SET password_hash = @passwordHash, updated_at = CURRENT_TIMESTAMP '
+          'RETURNING id',
         ),
         parameters: {
           'id': clonedUserId,
@@ -490,7 +508,9 @@ class SyncService {
         },
       );
 
+      final targetUserId = userResult.first[0] as String;
       final stateJson = jsonEncode(state.toJson(includeSecrets: true));
+      
       await conn.execute(
         pg.Sql.named(
           'INSERT INTO ${_quote(schema)}."app_states" (user_id, state) '
@@ -498,7 +518,7 @@ class SyncService {
           'ON CONFLICT (user_id) DO UPDATE SET state = @state::jsonb, updated_at = CURRENT_TIMESTAMP',
         ),
         parameters: {
-          'id': clonedUserId,
+          'id': targetUserId,
           'state': stateJson,
         },
       );

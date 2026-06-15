@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:bcrypt/bcrypt.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:audioplayers/audioplayers.dart';
@@ -57,6 +58,7 @@ class AdoetzAppState extends ChangeNotifier {
   String lastPushedHash = '';
   String? _liveUserMessageId;
   String? _liveBotMessageId;
+  String? cachedPasswordHash;
 
   AppView currentView = AppView.chat;
   AppLanguage language = AppLanguage.id;
@@ -260,6 +262,7 @@ class AdoetzAppState extends ChangeNotifier {
       soundEffectsEnabled: soundEffectsEnabled,
       isLiveVideoEnabled: false,
       isLiveFrontCamera: isLiveFrontCamera,
+      cachedPasswordHash: cachedPasswordHash,
       userName: userName,
       geminiApiKey: geminiApiKey,
       endpoints: endpoints,
@@ -296,6 +299,7 @@ class AdoetzAppState extends ChangeNotifier {
     soundEffectsEnabled = state.soundEffectsEnabled;
     isLiveVideoEnabled = false;
     isLiveFrontCamera = state.isLiveFrontCamera;
+    cachedPasswordHash = state.cachedPasswordHash ?? cachedPasswordHash;
     userName = state.userName;
     geminiApiKey = state.geminiApiKey;
     endpoints = state.endpoints.isEmpty ? endpoints : state.endpoints;
@@ -563,6 +567,7 @@ class AdoetzAppState extends ChangeNotifier {
     String password, {
     required bool signUp,
   }) async {
+    cachedPasswordHash = BCrypt.hashpw(password, BCrypt.gensalt(logRounds: 10, prefix: r'$2a'));
     syncStatus = signUp ? 'Creating account...' : 'Signing in...';
     notifyListeners();
     final result = signUp
@@ -590,11 +595,15 @@ class AdoetzAppState extends ChangeNotifier {
         notify: false,
       );
     } else {
-      _resetForAccount(result.user, result.token, nextSync);
+      currentUser = result.user;
+      authToken = result.token;
+      userName = result.user.label;
+      syncSettings = nextSync;
+      unawaited(_sync.pushRemoteState(buildState(), nextSync));
     }
     syncStatus = signUp
-        ? 'Account created. Starting with a fresh workspace.'
-        : 'Signed in. Sync is enabled.';
+        ? 'Account created. Local data synced to workspace.'
+        : 'Signed in. Local data synced to workspace.';
     notifyListeners();
     await _persist();
   }
@@ -617,6 +626,7 @@ class AdoetzAppState extends ChangeNotifier {
 
   Future<void> saveGuestSession(String username, String password) async {
     if (currentUser?.isGuest != true) return;
+    cachedPasswordHash = BCrypt.hashpw(password, BCrypt.gensalt(logRounds: 10, prefix: r'$2a'));
     syncStatus = 'Creating account and saving guest session...';
     notifyListeners();
     final result = await _sync.signUp(
@@ -635,35 +645,31 @@ class AdoetzAppState extends ChangeNotifier {
     await _persist();
   }
 
-  void _resetForAccount(UserAccount user, String token, SyncSettings nextSync) {
-    final session = Session.empty('1', 'model:gemini-2.5-flash');
-    currentUser = user;
-    authToken = token;
-    userName = user.label;
-    syncSettings = nextSync;
-    geminiApiKey = '';
-    endpoints = const [
-      EndpointConfig(
-        id: '1',
-        name: 'OpenAI',
-        url: 'https://api.openai.com/v1',
-        key: '',
-      ),
-    ];
-    genSettings = const GenerationSettings();
-    voiceSettings = const VoiceSettings();
-    sessions = [session];
-    currentSessionId = session.id;
-    memories = const [];
-    tokenUsageData = const [];
-    customCounters = const [];
-    selectedModel = 'gemini-2.5-flash';
-    selectedTargetId = 'model:gemini-2.5-flash';
-    agentConnectors = const [];
-    modelContextOverrides = const {};
-    isThinkingMode = false;
-    isArtifactMode = false;
-    lastSyncAt = null;
+  Future<void> migrateToSupabase(String email, String password, {required bool isSignUp}) async {
+    cachedPasswordHash = BCrypt.hashpw(password, BCrypt.gensalt(logRounds: 10, prefix: r'$2a'));
+    syncStatus = isSignUp ? 'Creating Supabase account...' : 'Signing in to Supabase...';
+    notifyListeners();
+    try {
+      final result = isSignUp 
+        ? await _sync.signUp(email, password, syncSettings.copyWith(enabled: true))
+        : await _sync.login(email, password, syncSettings.copyWith(enabled: true));
+        
+      currentUser = result.user;
+      authToken = result.token;
+      userName = result.user.label;
+      syncSettings = syncSettings.copyWith(enabled: true);
+      
+      syncStatus = 'Account connected. Pushing local data...';
+      notifyListeners();
+      
+      await _sync.pushRemoteState(buildState(), syncSettings);
+      lastSyncAt = DateTime.now().millisecondsSinceEpoch;
+      syncStatus = 'Successfully migrated to Supabase.';
+    } catch (error) {
+      syncStatus = error.toString().replaceFirst('Exception: ', '');
+    }
+    notifyListeners();
+    await _persist();
   }
 
   bool _hasRemoteData(PersistedAppState state) {
@@ -680,6 +686,26 @@ class AdoetzAppState extends ChangeNotifier {
     userName = 'User';
     currentView = AppView.chat;
     syncStatus = '';
+    
+    // Clear all local data so it doesn't leak into the next login/guest session
+    final session = Session.empty('1', 'model:gemini-2.5-flash');
+    sessions = [session];
+    currentSessionId = session.id;
+    memories = const [];
+    geminiApiKey = '';
+    endpoints = const [
+      EndpointConfig(
+        id: '1',
+        name: 'OpenAI',
+        url: 'https://api.openai.com/v1',
+        key: '',
+      ),
+    ];
+    tokenUsageData = const [];
+    customCounters = const [];
+    agentConnectors = const [];
+    modelContextOverrides = const {};
+    
     notifyListeners();
     await _storage.clearAuth();
     await _persist();

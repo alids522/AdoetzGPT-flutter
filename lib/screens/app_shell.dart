@@ -1098,7 +1098,7 @@ class _AppDrawerState extends State<_AppDrawer> {
           if (p.isClassic || p.glassBlur <= 0) {
             return Container(
               color: p.isClassic ? null : p.surface,
-              child: inner,
+              child: Material(color: Colors.transparent, child: inner),
             );
           }
 
@@ -1125,7 +1125,7 @@ class _AppDrawerState extends State<_AppDrawer> {
                       )
                     : null,
               ),
-              child: inner,
+              child: Material(color: Colors.transparent, child: inner),
             ),
           );
         },

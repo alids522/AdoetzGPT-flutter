@@ -310,14 +310,16 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   bool _canSubmit(AdoetzAppState app) {
+    final email = _username.text.trim();
+    final isValidEmail = email.contains('@') && email.contains('.');
     if (app.syncSettings.useSupabase) {
-      return _username.text.trim().isNotEmpty &&
+      return isValidEmail &&
           _password.text.isNotEmpty &&
           app.syncSettings.supabaseUrl.trim().isNotEmpty &&
           app.syncSettings.supabaseAnonKey.trim().isNotEmpty;
     }
     final db = app.syncSettings.database;
-    return _username.text.trim().isNotEmpty &&
+    return isValidEmail &&
         _password.text.isNotEmpty &&
         db.databaseUrl.trim().isNotEmpty &&
         db.database.trim().isNotEmpty &&
@@ -508,7 +510,7 @@ class _AdvancedDbSettings extends StatelessWidget {
                         onChanged: (value) => _updateDb(
                           context,
                           db.copyWith(
-                            schemaName: value.isEmpty ? 'adoetzgpt' : value,
+                            schemaName: value,
                           ),
                         ),
                       ),

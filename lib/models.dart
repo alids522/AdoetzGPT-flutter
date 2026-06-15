@@ -1644,6 +1644,7 @@ class PersistedAppState {
     required this.soundEffectsEnabled,
     required this.isLiveVideoEnabled,
     required this.isLiveFrontCamera,
+    this.cachedPasswordHash,
     this.savedAt,
   });
 
@@ -1675,6 +1676,7 @@ class PersistedAppState {
   final bool soundEffectsEnabled;
   final bool isLiveVideoEnabled;
   final bool isLiveFrontCamera;
+  final String? cachedPasswordHash;
   final int? savedAt;
 
   factory PersistedAppState.defaults() {
@@ -1782,6 +1784,7 @@ class PersistedAppState {
       soundEffectsEnabled: boolValue(json['soundEffectsEnabled'], true),
       isLiveVideoEnabled: boolValue(json['isLiveVideoEnabled']),
       isLiveFrontCamera: boolValue(json['isLiveFrontCamera']),
+      cachedPasswordHash: json['cachedPasswordHash'] as String?,
       savedAt: json['savedAt'] == null ? null : intValue(json['savedAt']),
     );
   }
@@ -1822,6 +1825,7 @@ class PersistedAppState {
     'soundEffectsEnabled': soundEffectsEnabled,
     'isLiveVideoEnabled': isLiveVideoEnabled,
     'isLiveFrontCamera': isLiveFrontCamera,
+    if (includeSecrets && cachedPasswordHash != null && cachedPasswordHash!.isNotEmpty) 'cachedPasswordHash': cachedPasswordHash,
     'savedAt': savedAt ?? DateTime.now().millisecondsSinceEpoch,
   };
 

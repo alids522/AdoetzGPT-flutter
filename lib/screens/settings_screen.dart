@@ -582,16 +582,17 @@ class _SyncSection extends StatelessWidget {
             accent: Colors.cyan,
           ),
           const SizedBox(height: 18),
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: p.surfaceDim,
+          Material(
+            color: p.surfaceDim,
+            shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: p.outline),
+              side: BorderSide(color: p.outline),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
                 Wrap(
                   spacing: 10,
                   runSpacing: 10,
@@ -743,6 +744,119 @@ class _SyncSection extends StatelessWidget {
                       app.syncSettings.copyWith(supabaseAnonKey: value),
                     ),
                   ),
+                  if (app.authToken.startsWith('direct:')) ...[
+                    const SizedBox(height: 18),
+                    GlassPanel(
+                      radius: 18,
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                LucideIcons.arrowUpCircle,
+                                color: Colors.amberAccent,
+                                size: 14,
+                              ),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'MIGRATE TO SUPABASE',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1.4,
+                                  color: Colors.amberAccent,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Your current session is from Postgres. Enter your Supabase email and password below to authenticate and seamlessly migrate your local data without logging out.',
+                            style: TextStyle(fontSize: 11),
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: guestUser,
+                            decoration: const InputDecoration(
+                              labelText: 'Supabase Email',
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: guestPass,
+                            obscureText: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Supabase Password',
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: savingGuest
+                                      ? null
+                                      : () async {
+                                          if (!guestUser.text.contains('@') || !guestUser.text.contains('.')) {
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                const SnackBar(content: Text('Please enter a valid email address')),
+                                              );
+                                            }
+                                            return;
+                                          }
+                                          onSavingGuest(true);
+                                          try {
+                                            await app.migrateToSupabase(
+                                              guestUser.text,
+                                              guestPass.text,
+                                              isSignUp: false,
+                                            );
+                                            guestPass.clear();
+                                          } finally {
+                                            onSavingGuest(false);
+                                          }
+                                        },
+                                  child: Text(savingGuest ? '...' : 'Log In & Migrate'),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: savingGuest
+                                      ? null
+                                      : () async {
+                                          if (!guestUser.text.contains('@') || !guestUser.text.contains('.')) {
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                const SnackBar(content: Text('Please enter a valid email address')),
+                                              );
+                                            }
+                                            return;
+                                          }
+                                          onSavingGuest(true);
+                                          try {
+                                            await app.migrateToSupabase(
+                                              guestUser.text,
+                                              guestPass.text,
+                                              isSignUp: true,
+                                            );
+                                            guestPass.clear();
+                                          } finally {
+                                            onSavingGuest(false);
+                                          }
+                                        },
+                                  child: Text(savingGuest ? '...' : 'Sign Up & Migrate'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ] else ...[
                   const SizedBox(height: 16),
                   _SettingField(
@@ -781,7 +895,7 @@ class _SyncSection extends StatelessWidget {
                         onChanged: (value) => _updateDb(
                           context,
                           db.copyWith(
-                            schemaName: value.isEmpty ? 'adoetzgpt' : value,
+                            schemaName: value,
                           ),
                         ),
                       ),
@@ -842,6 +956,7 @@ class _SyncSection extends StatelessWidget {
                 ),
               ],
             ),
+          ),
           ),
         ],
       ),
