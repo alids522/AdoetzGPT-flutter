@@ -28,6 +28,7 @@ class AdoetzAppState extends ChangeNotifier {
   final AiService _ai;
   GeminiLiveService? _liveService;
   Timer? _remoteSyncTimer;
+  Timer? _remotePullTimer;
   Timer? _liveInputReleaseTimer;
   Timer? _liveOutputPulseTimer;
   final Set<String> generatingSessionIds = {};
@@ -40,6 +41,7 @@ class AdoetzAppState extends ChangeNotifier {
   final Map<String, Timer> _streamFlushTimers = {};
   bool _dirtySettings = false;
   bool _applyingRemoteSync = false;
+  bool _remotePullInFlight = false;
 
   int _stateSavedAt = 0;
 
@@ -229,25 +231,18 @@ class AdoetzAppState extends ChangeNotifier {
             .pullRemoteState(authToken, syncSettings)
             .timeout(const Duration(seconds: 8));
         if (remote != null) {
-          final remoteSessions = {
-            for (final session in remote.sessions) session.id: session,
-          };
-          final localNewerSessionIds = localBeforePull.sessions
-              .where((session) {
-                final remoteSession = remoteSessions[session.id];
-                return remoteSession == null ||
-                    session.updatedAt > remoteSession.updatedAt;
-              })
-              .map((session) => session.id)
-              .toSet();
+          final localSessionIdsToPush = _localSessionIdsToPush(
+            localBeforePull,
+            remote,
+          );
           final localSettingsChanged =
               (localBeforePull.savedAt ?? 0) > (remote.savedAt ?? 0);
           await _applyRemoteSyncState(_mergeRemote(localBeforePull, remote));
           syncStatus = 'Database sync loaded.';
           notifyListeners();
-          if (localNewerSessionIds.isNotEmpty || localSettingsChanged) {
+          if (localSessionIdsToPush.isNotEmpty || localSettingsChanged) {
             _scheduleRemoteSync(
-              sessionIds: localNewerSessionIds,
+              sessionIds: localSessionIdsToPush,
               settingsChanged: localSettingsChanged,
             );
           }
@@ -353,9 +348,8 @@ class AdoetzAppState extends ChangeNotifier {
     };
     for (final session in remote.sessions) {
       final existing = sessionMap[session.id];
-      if (existing == null || session.updatedAt > existing.updatedAt) {
-        sessionMap[session.id] = session;
-      }
+      sessionMap[session.id] =
+          existing == null ? session : _mergeSession(existing, session);
     }
     final mergedSessions = sessionMap.values.toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
@@ -465,6 +459,96 @@ class AdoetzAppState extends ChangeNotifier {
       lastSyncAt: local.lastSyncAt,
       savedAt: math.max(local.savedAt ?? 0, remote.savedAt ?? 0),
     );
+  }
+
+  Set<String> _localSessionIdsToPush(
+    PersistedAppState local,
+    PersistedAppState? remote,
+  ) {
+    if (remote == null) {
+      return local.sessions.map((session) => session.id).toSet();
+    }
+    final remoteSessions = {
+      for (final session in remote.sessions) session.id: session,
+    };
+    return local.sessions
+        .where((session) {
+          final remoteSession = remoteSessions[session.id];
+          if (remoteSession == null) return true;
+          if (session.updatedAt > remoteSession.updatedAt) return true;
+          final remoteMessageIds = remoteSession.messages
+              .map((message) => message.id)
+              .toSet();
+          return session.messages.any(
+            (message) => !remoteMessageIds.contains(message.id),
+          );
+        })
+        .map((session) => session.id)
+        .toSet();
+  }
+
+  Session _mergeSession(Session local, Session remote) {
+    final remoteWins = remote.updatedAt >= local.updatedAt;
+    final primary = remoteWins ? remote : local;
+    final secondary = remoteWins ? local : remote;
+    final messages = _mergeSessionMessages(primary, secondary);
+    return primary.copyWith(
+      title: primary.title.trim().isNotEmpty ? primary.title : secondary.title,
+      messages: messages,
+      createdAt: math.min(local.createdAt, remote.createdAt),
+      updatedAt: math.max(local.updatedAt, remote.updatedAt),
+      pinned: primary.pinned || secondary.pinned,
+      targetHistory: _mergeStringList(
+        primary.targetHistory,
+        secondary.targetHistory,
+      ),
+      targetSwitchEvents: _mergeTargetSwitchEvents(
+        primary.targetSwitchEvents,
+        secondary.targetSwitchEvents,
+      ),
+    );
+  }
+
+  List<Message> _mergeSessionMessages(Session primary, Session secondary) {
+    final mergedById = <String, Message>{
+      for (final message in secondary.messages) message.id: message,
+      for (final message in primary.messages) message.id: message,
+    };
+    final seen = <String>{};
+    final merged = <Message>[];
+    for (final message in primary.messages) {
+      if (seen.add(message.id)) merged.add(mergedById[message.id]!);
+    }
+    for (final message in secondary.messages) {
+      if (seen.add(message.id)) merged.add(mergedById[message.id]!);
+    }
+    return merged;
+  }
+
+  List<String> _mergeStringList(List<String> primary, List<String> secondary) {
+    final seen = <String>{};
+    return [...primary, ...secondary]
+        .where((value) => value.trim().isNotEmpty && seen.add(value))
+        .toList();
+  }
+
+  List<TargetSwitchEvent> _mergeTargetSwitchEvents(
+    List<TargetSwitchEvent> primary,
+    List<TargetSwitchEvent> secondary,
+  ) {
+    final byId = <String, TargetSwitchEvent>{
+      for (final event in secondary) event.id: event,
+      for (final event in primary) event.id: event,
+    };
+    final seen = <String>{};
+    return [...primary, ...secondary]
+        .where((event) => seen.add(event.id))
+        .map((event) => byId[event.id]!)
+        .toList();
+  }
+
+  bool _sessionsEquivalent(Session a, Session b) {
+    return jsonEncode(a.toJson()) == jsonEncode(b.toJson());
   }
 
   List<EndpointConfig> _mergeEndpointConfigs(
@@ -663,6 +747,7 @@ class AdoetzAppState extends ChangeNotifier {
     syncStatus = 'Guest mode. Local sessions are saved on this device.';
     _clearDirtySyncState();
     notifyListeners();
+    _remotePullTimer?.cancel();
     unawaited(_sync.unsubscribeRemoteChanges());
     unawaited(_persist());
   }
@@ -729,6 +814,7 @@ class AdoetzAppState extends ChangeNotifier {
 
   Future<void> signOut() async {
     _remoteSyncTimer?.cancel();
+    _remotePullTimer?.cancel();
     _clearDirtySyncState();
     await _sync.unsubscribeRemoteChanges();
     currentUser = null;
@@ -2171,6 +2257,7 @@ class AdoetzAppState extends ChangeNotifier {
     syncSettings = value;
     notifyListeners();
     if (!value.enabled || !value.useSupabase) {
+      _remotePullTimer?.cancel();
       unawaited(_sync.unsubscribeRemoteChanges());
     } else {
       unawaited(_startRealtimeSync());
@@ -2244,21 +2331,29 @@ class AdoetzAppState extends ChangeNotifier {
     syncStatus = 'Syncing...';
     notifyListeners();
     _remoteSyncTimer?.cancel();
-    final previousLastSyncAt = lastSyncAt;
+    final localBeforePull = buildState();
     final changedSessionIds = Set<String>.from(_dirtySessionIds);
-    final pushSettings = _dirtySettings || changedSessionIds.isEmpty;
+    var pushSettings = _dirtySettings;
     _dirtySessionIds.clear();
     _dirtySettings = false;
     try {
       final remote = await _sync.pullRemoteState(authToken, syncSettings);
       if (remote != null) {
-        await _applyRemoteSyncState(_mergeRemote(buildState(), remote));
+        changedSessionIds.addAll(
+          _localSessionIdsToPush(localBeforePull, remote),
+        );
+        pushSettings = pushSettings ||
+            (localBeforePull.savedAt ?? 0) > (remote.savedAt ?? 0);
+        await _applyRemoteSyncState(_mergeRemote(localBeforePull, remote));
+      } else {
+        changedSessionIds.addAll(_localSessionIdsToPush(localBeforePull, null));
+        pushSettings = true;
       }
       await _sync.pushRemoteState(
         buildState(),
         syncSettings,
-        lastSyncAt: previousLastSyncAt,
-        changedSessionIds: changedSessionIds.isEmpty ? null : changedSessionIds,
+        lastSyncAt: lastSyncAt,
+        changedSessionIds: changedSessionIds,
         settingsChanged: pushSettings,
       );
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
@@ -2725,6 +2820,7 @@ class AdoetzAppState extends ChangeNotifier {
         authToken.isEmpty ||
         !syncSettings.enabled ||
         !syncSettings.useSupabase) {
+      _remotePullTimer?.cancel();
       await _sync.unsubscribeRemoteChanges();
       return;
     }
@@ -2744,10 +2840,64 @@ class AdoetzAppState extends ChangeNotifier {
           notifyListeners();
         },
       );
+      _restartRemotePullFallback();
     } catch (error) {
+      _restartRemotePullFallback();
       syncStatus =
           'Realtime sync: ${error.toString().replaceFirst('Exception: ', '')}';
       notifyListeners();
+    }
+  }
+
+  void _restartRemotePullFallback() {
+    _remotePullTimer?.cancel();
+    if (currentUser == null ||
+        currentUser!.isGuest ||
+        authToken.isEmpty ||
+        !syncSettings.enabled ||
+        !syncSettings.useSupabase) {
+      return;
+    }
+    _remotePullTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      unawaited(_pullRemoteStateInForeground());
+    });
+  }
+
+  Future<void> _pullRemoteStateInForeground() async {
+    if (_remotePullInFlight || _applyingRemoteSync) return;
+    if (currentUser == null ||
+        currentUser!.isGuest ||
+        authToken.isEmpty ||
+        !syncSettings.enabled ||
+        !syncSettings.useSupabase) {
+      return;
+    }
+
+    _remotePullInFlight = true;
+    try {
+      final localBeforePull = buildState();
+      final remote = await _sync
+          .pullRemoteState(authToken, syncSettings)
+          .timeout(const Duration(seconds: 8));
+      if (remote == null) return;
+
+      final localSessionIdsToPush = _localSessionIdsToPush(
+        localBeforePull,
+        remote,
+      );
+      final localSettingsChanged =
+          (localBeforePull.savedAt ?? 0) > (remote.savedAt ?? 0);
+      await _applyRemoteSyncState(_mergeRemote(localBeforePull, remote));
+      if (localSessionIdsToPush.isNotEmpty || localSettingsChanged) {
+        _scheduleRemoteSync(
+          sessionIds: localSessionIdsToPush,
+          settingsChanged: localSettingsChanged,
+        );
+      }
+    } catch (_) {
+      // Realtime remains primary; polling failures should not interrupt chat.
+    } finally {
+      _remotePullInFlight = false;
     }
   }
 
@@ -2766,18 +2916,21 @@ class AdoetzAppState extends ChangeNotifier {
     final existingIndex = sessions.indexWhere(
       (session) => session.id == remoteSession.id,
     );
-    if (existingIndex != -1 &&
-        sessions[existingIndex].updatedAt >= remoteSession.updatedAt) {
-      return;
-    }
 
     _applyingRemoteSync = true;
     try {
       if (existingIndex == -1) {
         sessions = [remoteSession, ...sessions];
       } else {
+        final mergedSession = _mergeSession(
+          sessions[existingIndex],
+          remoteSession,
+        );
+        if (_sessionsEquivalent(sessions[existingIndex], mergedSession)) {
+          return;
+        }
         final next = [...sessions];
-        next[existingIndex] = remoteSession;
+        next[existingIndex] = mergedSession;
         sessions = next;
       }
       final active = activeSessions;
@@ -2888,6 +3041,7 @@ class AdoetzAppState extends ChangeNotifier {
   @override
   void dispose() {
     _remoteSyncTimer?.cancel();
+    _remotePullTimer?.cancel();
     _liveInputReleaseTimer?.cancel();
     _liveOutputPulseTimer?.cancel();
     final live = _liveService;
