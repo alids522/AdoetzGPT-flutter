@@ -67,6 +67,8 @@ class AdoetzAppState extends ChangeNotifier {
   String lastPushedHash = '';
   String? _liveUserMessageId;
   String? _liveBotMessageId;
+  String? _liveSessionId;
+  Timer? _liveAutoSaveTimer;
   String? cachedPasswordHash;
 
   AppView currentView = AppView.chat;
@@ -1877,12 +1879,14 @@ class AdoetzAppState extends ChangeNotifier {
     unawaited(_playSound('start_voice_mode.wav'));
 
     final liveModels = _liveModelCandidates();
+    _liveSessionId = currentSession.id;
     isLiveActive = true;
     isLiveConnecting = true;
     isLiveRecording = false;
     liveInputLevel = 0;
     liveStatus = 'Connecting to Gemini Live...';
     syncStatus = '';
+    _startLiveAutoSave();
     notifyListeners();
 
     try {
@@ -1960,6 +1964,7 @@ class AdoetzAppState extends ChangeNotifier {
             model: liveModel,
             finished: true,
           );
+          unawaited(_persist());
           notifyListeners();
         },
         onClosed: () {
@@ -2595,7 +2600,12 @@ class AdoetzAppState extends ChangeNotifier {
     final clean = text.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (clean.isEmpty) return;
 
-    final session = currentSession;
+    // Always write to the session that was active when voice started,
+    // never to whatever currentSession happens to be now.
+    final targetSessionId = _liveSessionId ?? currentSession.id;
+    final session = sessions
+        .where((s) => s.id == targetSessionId)
+        .firstOrNull ?? currentSession;
     final isUser = sender == 'user';
     final activeId = isUser ? _liveUserMessageId : _liveBotMessageId;
     final now = DateTime.now();
@@ -2694,7 +2704,27 @@ class AdoetzAppState extends ChangeNotifier {
     _liveOutputPulseTimer = null;
     _liveUserMessageId = null;
     _liveBotMessageId = null;
+    _liveSessionId = null;
+    _liveAutoSaveTimer?.cancel();
+    _liveAutoSaveTimer = null;
     if (clearStatus) liveStatus = '';
+  }
+
+  /// Periodically persist the voice session to disk so a crash/kill
+  /// doesn't lose more than ~10 seconds of transcript.
+  void _startLiveAutoSave() {
+    _liveAutoSaveTimer?.cancel();
+    _liveAutoSaveTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) {
+        if (!isLiveActive && !isLiveConnecting) {
+          _liveAutoSaveTimer?.cancel();
+          _liveAutoSaveTimer = null;
+          return;
+        }
+        unawaited(_persist());
+      },
+    );
   }
 
   List<String> _liveModelCandidates() {
@@ -2984,6 +3014,9 @@ class AdoetzAppState extends ChangeNotifier {
   Future<void> _pullRemoteStateInForeground() async {
     if (_remotePullInFlight || _applyingRemoteSync) return;
     if (generatingSessionIds.isNotEmpty) return;
+    // Never pull remote state during a live voice/video call — the
+    // in-memory transcript would be overwritten or the session switched.
+    if (isLiveActive || isLiveConnecting) return;
     if (currentUser == null ||
         currentUser!.isGuest ||
         authToken.isEmpty ||
@@ -3041,6 +3074,12 @@ class AdoetzAppState extends ChangeNotifier {
       return;
     }
     if (generatingSessionIds.contains(remoteSession.id)) return;
+    // Block remote session changes for the live-call session to prevent
+    // transcript corruption, message duplication, or session switching.
+    if ((isLiveActive || isLiveConnecting) &&
+        _liveSessionId == remoteSession.id) {
+      return;
+    }
     final existingIndex = sessions.indexWhere(
       (session) => session.id == remoteSession.id,
     );
@@ -3212,6 +3251,7 @@ class AdoetzAppState extends ChangeNotifier {
     _remotePullTimer?.cancel();
     _liveInputReleaseTimer?.cancel();
     _liveOutputPulseTimer?.cancel();
+    _liveAutoSaveTimer?.cancel();
     final live = _liveService;
     if (live != null) unawaited(live.dispose());
     _cancelStreamFlush(resetText: true);
