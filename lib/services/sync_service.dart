@@ -156,8 +156,18 @@ class SyncService {
           authFlowType: supa.AuthFlowType.implicit,
         ),
       );
-      final settingsRes = await client.from('user_settings').select().eq('user_id', token).maybeSingle();
-      final sessionsRes = await client.from('chat_sessions').select().eq('user_id', token);
+      // Extract user ID from Supabase JWT token
+      String userId = '';
+      try {
+        final parts = token.split('.');
+        if (parts.length == 3) {
+          final payload = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+          userId = jsonDecode(payload)['sub'] ?? '';
+        }
+      } catch (_) {}
+
+      final settingsRes = await client.from('user_settings').select().eq('user_id', userId).maybeSingle();
+      final sessionsRes = await client.from('chat_sessions').select().eq('user_id', userId);
       
       final combined = <String, dynamic>{};
       if (settingsRes != null && settingsRes['state'] != null) {

@@ -1,0 +1,3 @@
+[mcp_servers.dart]
+command = 'C:\Users\abdur\flutter\bin\dart'
+args = ["mcp-server"]
