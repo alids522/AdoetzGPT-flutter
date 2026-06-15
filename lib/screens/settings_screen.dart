@@ -2276,16 +2276,6 @@ class _MediaSection extends StatelessWidget {
               app.genSettings.copyWith(imageModel: value),
             ),
           ),
-          const SizedBox(height: 18),
-          Text('VIDEO MODEL', style: _labelStyle(context)),
-          const SizedBox(height: 8),
-          OutlinedButton(
-            onPressed: null,
-            child: const Align(
-              alignment: Alignment.centerLeft,
-              child: Text('Google Veo (Latest)    Active'),
-            ),
-          ),
         ],
       ),
     );
@@ -2312,6 +2302,10 @@ class _ActionBar extends StatelessWidget {
                 context: context,
                 builder: (context) => AlertDialog(
                   title: Text(copy.t('sidebar', 'signOutConfirm')),
+                  content: Text(
+                    'WARNING: This will delete all local chat history, memories, and settings. This cannot be undone.',
+                    style: TextStyle(color: p.error),
+                  ),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(context, false),

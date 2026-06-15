@@ -2538,17 +2538,6 @@ class _VoiceOverlay extends StatelessWidget {
                   context.read<AdoetzAppState>().toggleLiveVideo();
                 },
               ),
-              SizedBox(width: compact ? 6 : 8),
-              if (!compact) ...[
-                RoundIconButton(
-                  icon: LucideIcons.monitorUp,
-                  size: buttonSize,
-                  background: p.surfaceDim,
-                  color: p.onSurface,
-                  onPressed: () {},
-                ),
-                const SizedBox(width: 8),
-              ],
               SizedBox(width: compact ? 8 : 16),
               _LiveStatusCapsule(
                 width: capsuleBaseWidth,
@@ -2713,34 +2702,7 @@ class _LiveVideoTopControls extends StatelessWidget {
               : 'Use front camera',
           onPressed: app.toggleLiveCameraFacing,
         ),
-        const SizedBox(width: 12),
-        Container(
-          height: 58,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.70),
-            borderRadius: BorderRadius.circular(29),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _LiveCircleButton(
-                icon: LucideIcons.captions,
-                size: 42,
-                iconSize: 22,
-                background: Colors.transparent,
-                onPressed: () {},
-              ),
-              _LiveCircleButton(
-                icon: LucideIcons.moreHorizontal,
-                size: 42,
-                iconSize: 24,
-                background: Colors.transparent,
-                onPressed: () {},
-              ),
-            ],
-          ),
-        ),
+
       ],
     );
   }
@@ -2906,33 +2868,35 @@ class _LiveCircleButton extends StatelessWidget {
     required this.icon,
     required this.onPressed,
     this.tooltip,
-    this.size = 58,
-    this.iconSize = 26,
-    this.background,
   });
 
   final IconData icon;
   final VoidCallback? onPressed;
   final String? tooltip;
-  final double size;
-  final double iconSize;
-  final Color? background;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: size,
-      height: size,
+      width: 58,
+      height: 58,
       child: IconButton(
         tooltip: tooltip,
         onPressed: onPressed,
-        style: IconButton.styleFrom(
-          backgroundColor: background ?? Colors.black.withValues(alpha: 0.70),
-          foregroundColor: Colors.white,
-          shape: const CircleBorder(),
-          padding: EdgeInsets.zero,
+        iconSize: 26,
+        padding: EdgeInsets.zero,
+        splashRadius: 28,
+        icon: Container(
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: Color(0xff171717),
+          ),
+          child: Center(
+            child: Icon(
+              icon,
+              color: Colors.white,
+            ),
+          ),
         ),
-        icon: Icon(icon, size: iconSize),
       ),
     );
   }

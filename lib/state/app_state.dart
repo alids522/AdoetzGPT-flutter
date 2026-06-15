@@ -359,9 +359,34 @@ class AdoetzAppState extends ChangeNotifier {
     };
     for (final session in remote.sessions) {
       final existing = sessionMap[session.id];
-      sessionMap[session.id] =
-          existing == null ? session : _mergeSession(existing, session);
+      if (existing == null) {
+        sessionMap[session.id] = session;
+      } else {
+        final existingMessageIds = existing.messages.map((m) => m.id).toSet();
+        final remoteMessageIds = session.messages.map((m) => m.id).toSet();
+        
+        final localAddedMessages = existing.messages.any((m) => !remoteMessageIds.contains(m.id));
+        final remoteAddedMessages = session.messages.any((m) => !existingMessageIds.contains(m.id));
+        
+        if (localAddedMessages && remoteAddedMessages) {
+          final forkedId = _newId('session');
+          final forkedLocal = existing.copyWith(
+            id: forkedId,
+            title: '${existing.title} (Device Copy)',
+          );
+          
+          sessionMap[session.id] = session;
+          sessionMap[forkedId] = forkedLocal;
+          
+          if (currentSessionId == session.id) {
+            currentSessionId = forkedId;
+          }
+        } else {
+          sessionMap[session.id] = _mergeSession(existing, session);
+        }
+      }
     }
+    
     final mergedSessions = sessionMap.values.toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
@@ -2421,7 +2446,7 @@ class AdoetzAppState extends ChangeNotifier {
     syncStatus = 'Syncing...';
     notifyListeners();
     _remoteSyncTimer?.cancel();
-    _remoteSyncTimer?.cancel();
+    _remotePullTimer?.cancel();
     final changedSessionIds = Set<String>.from(_dirtySessionIds);
     var pushSettings = _dirtySettings;
     _dirtySessionIds.clear();

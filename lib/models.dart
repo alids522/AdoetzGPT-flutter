@@ -385,6 +385,7 @@ class Session {
   final List<TargetSwitchEvent> targetSwitchEvents;
 
   Session copyWith({
+    String? id,
     String? title,
     List<Message>? messages,
     int? createdAt,
@@ -399,7 +400,7 @@ class Session {
     List<TargetSwitchEvent>? targetSwitchEvents,
   }) {
     return Session(
-      id: id,
+      id: id ?? this.id,
       title: title ?? this.title,
       messages: messages ?? this.messages,
       createdAt: createdAt ?? this.createdAt,
