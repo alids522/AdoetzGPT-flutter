@@ -233,18 +233,20 @@ class AdoetzAppState extends ChangeNotifier {
         authToken.isNotEmpty &&
         syncSettings.enabled) {
       try {
-        final localBeforePull = buildState();
         final remote = await _sync
             .pullRemoteState(authToken, syncSettings)
             .timeout(const Duration(seconds: 8));
         if (remote != null) {
+          // Use fresh local state AFTER the network call to avoid
+          // overwriting changes made while waiting for the response.
+          final currentLocal = buildState();
           final localSessionIdsToPush = _localSessionIdsToPush(
-            localBeforePull,
+            currentLocal,
             remote,
           );
           final localSettingsChanged =
-              (localBeforePull.savedAt ?? 0) > (remote.savedAt ?? 0);
-          await _applyRemoteSyncState(_mergeRemote(localBeforePull, remote));
+              (currentLocal.savedAt ?? 0) > (remote.savedAt ?? 0);
+          await _applyRemoteSyncState(_mergeRemote(currentLocal, remote));
           syncStatus = 'Database sync loaded.';
           notifyListeners();
           if (localSessionIdsToPush.isNotEmpty || localSettingsChanged) {
@@ -2992,19 +2994,27 @@ class AdoetzAppState extends ChangeNotifier {
 
     _remotePullInFlight = true;
     try {
-      final localBeforePull = buildState();
       final remote = await _sync
           .pullRemoteState(authToken, syncSettings)
           .timeout(const Duration(seconds: 8));
       if (remote == null) return;
 
+      final currentLocal = buildState();
+
       final localSessionIdsToPush = _localSessionIdsToPush(
-        localBeforePull,
+        currentLocal,
         remote,
       );
       final localSettingsChanged =
-          (localBeforePull.savedAt ?? 0) > (remote.savedAt ?? 0);
-      await _applyRemoteSyncState(_mergeRemote(localBeforePull, remote));
+          (currentLocal.savedAt ?? 0) > (remote.savedAt ?? 0);
+          
+      final remoteIsNewer = (remote.savedAt ?? 0) > (currentLocal.savedAt ?? 0);
+      final remoteHasMoreSessions = remote.sessions.length > currentLocal.sessions.length;
+      
+      if (remoteIsNewer || remoteHasMoreSessions) {
+        await _applyRemoteSyncState(_mergeRemote(currentLocal, remote));
+      }
+      
       if (localSessionIdsToPush.isNotEmpty || localSettingsChanged) {
         _scheduleRemoteSync(
           sessionIds: localSessionIdsToPush,
@@ -3051,10 +3061,14 @@ class AdoetzAppState extends ChangeNotifier {
         next[existingIndex] = mergedSession;
         sessions = next;
       }
-      final active = activeSessions;
-      if (active.isNotEmpty &&
-          !active.any((session) => session.id == currentSessionId)) {
-        currentSessionId = active.first.id;
+      // GUARD: Only switch currentSessionId if the CURRENT session was
+      // deleted. Never yank the user to a different session just because
+      // an unrelated remote session update arrived.
+      if (currentSessionId == remoteSession.id && remoteSession.deleted) {
+        final active = activeSessions;
+        if (active.isNotEmpty) {
+          currentSessionId = active.first.id;
+        }
       }
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
       syncStatus = 'Database sync updated.';
@@ -3068,7 +3082,18 @@ class AdoetzAppState extends ChangeNotifier {
   Future<void> _applyRemoteSyncState(PersistedAppState state) async {
     _applyingRemoteSync = true;
     try {
+      // GUARD: Remember which session the user is currently viewing.
+      // Remote sync must never yank the user to a different session.
+      final preservedSessionId = currentSessionId;
+
       _applyState(state, notify: false);
+
+      // Restore the session the user was on, unless it was deleted.
+      final activeIds = activeSessions.map((s) => s.id).toSet();
+      if (activeIds.contains(preservedSessionId)) {
+        currentSessionId = preservedSessionId;
+      }
+
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
       syncStatus = 'Database sync updated.';
       notifyListeners();
@@ -3131,23 +3156,24 @@ class AdoetzAppState extends ChangeNotifier {
         notifyListeners();
         var stateForPush = buildState();
         if (changedSessionIds.isNotEmpty) {
-          final localBeforePush = stateForPush;
           final remote = await _sync
               .pullRemoteState(authToken, syncSettings)
               .timeout(const Duration(seconds: 8));
           if (remote != null) {
+            final currentLocal = buildState();
+            
             changedSessionIds.addAll(
-              _localSessionIdsToPush(localBeforePush, remote),
+              _localSessionIdsToPush(currentLocal, remote),
             );
             pushSettings = pushSettings ||
-                (localBeforePush.savedAt ?? 0) > (remote.savedAt ?? 0);
+                (currentLocal.savedAt ?? 0) > (remote.savedAt ?? 0);
             
-            final remoteIsNewer = (remote.savedAt ?? 0) > (localBeforePush.savedAt ?? 0);
-            final remoteHasMoreSessions = remote.sessions.length > localBeforePush.sessions.length;
+            final remoteIsNewer = (remote.savedAt ?? 0) > (currentLocal.savedAt ?? 0);
+            final remoteHasMoreSessions = remote.sessions.length > currentLocal.sessions.length;
             
             if (remoteIsNewer || remoteHasMoreSessions) {
               await _applyRemoteSyncState(
-                _mergeRemote(buildState(), remote),
+                _mergeRemote(currentLocal, remote),
               );
               stateForPush = buildState();
             }
