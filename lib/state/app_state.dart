@@ -31,12 +31,15 @@ class AdoetzAppState extends ChangeNotifier {
   Timer? _liveInputReleaseTimer;
   Timer? _liveOutputPulseTimer;
   final Set<String> generatingSessionIds = {};
+  final Set<String> _dirtySessionIds = {};
   final Map<String, String> _sessionGenerationIds = {};
   final Map<String, String> _generationBotIds = {};
   final Set<String> _stopRequestedGenerations = {};
   final Map<String, String> _pendingStreamTexts = {};
   final Map<String, String> _lastDisplayedStreamTexts = {};
   final Map<String, Timer> _streamFlushTimers = {};
+  bool _dirtySettings = false;
+  bool _applyingRemoteSync = false;
 
   int _stateSavedAt = 0;
 
@@ -212,6 +215,7 @@ class AdoetzAppState extends ChangeNotifier {
     unawaited(fetchModels());
     unawaited(_persist(touchSavedAt: false));
     unawaited(_pullRemoteStateAfterStartup());
+    unawaited(_startRealtimeSync());
   }
 
   Future<void> _pullRemoteStateAfterStartup() async {
@@ -220,15 +224,33 @@ class AdoetzAppState extends ChangeNotifier {
         authToken.isNotEmpty &&
         syncSettings.enabled) {
       try {
+        final localBeforePull = buildState();
         final remote = await _sync
             .pullRemoteState(authToken, syncSettings)
             .timeout(const Duration(seconds: 8));
         if (remote != null) {
-          _applyState(_mergeRemote(buildState(), remote), notify: false);
-          lastSyncAt = DateTime.now().millisecondsSinceEpoch;
+          final remoteSessions = {
+            for (final session in remote.sessions) session.id: session,
+          };
+          final localNewerSessionIds = localBeforePull.sessions
+              .where((session) {
+                final remoteSession = remoteSessions[session.id];
+                return remoteSession == null ||
+                    session.updatedAt > remoteSession.updatedAt;
+              })
+              .map((session) => session.id)
+              .toSet();
+          final localSettingsChanged =
+              (localBeforePull.savedAt ?? 0) > (remote.savedAt ?? 0);
+          await _applyRemoteSyncState(_mergeRemote(localBeforePull, remote));
           syncStatus = 'Database sync loaded.';
           notifyListeners();
-          unawaited(_persist(touchSavedAt: false));
+          if (localNewerSessionIds.isNotEmpty || localSettingsChanged) {
+            _scheduleRemoteSync(
+              sessionIds: localNewerSessionIds,
+              settingsChanged: localSettingsChanged,
+            );
+          }
         }
       } catch (error) {
         syncStatus = 'Auto-pull failed; using local state.';
@@ -278,6 +300,7 @@ class AdoetzAppState extends ChangeNotifier {
       memories: memories,
       tokenUsageData: tokenUsageData,
       customCounters: customCounters,
+      lastSyncAt: lastSyncAt,
       savedAt: savedAt,
     );
   }
@@ -285,6 +308,7 @@ class AdoetzAppState extends ChangeNotifier {
   void _applyState(PersistedAppState state, {bool notify = true}) {
     currentUser = state.currentUser;
     _stateSavedAt = state.savedAt ?? DateTime.now().millisecondsSinceEpoch;
+    lastSyncAt = state.lastSyncAt ?? lastSyncAt;
     authToken = state.authToken;
     syncSettings = state.syncSettings;
     language = state.language;
@@ -438,6 +462,7 @@ class AdoetzAppState extends ChangeNotifier {
       isLiveFrontCamera: remoteIsNewer
           ? remote.isLiveFrontCamera
           : local.isLiveFrontCamera,
+      lastSyncAt: local.lastSyncAt,
       savedAt: math.max(local.savedAt ?? 0, remote.savedAt ?? 0),
     );
   }
@@ -601,13 +626,22 @@ class AdoetzAppState extends ChangeNotifier {
         }),
         notify: false,
       );
+      _clearDirtySyncState();
+      lastSyncAt = DateTime.now().millisecondsSinceEpoch;
     } else {
       currentUser = result.user;
       authToken = result.token;
       userName = result.user.label;
       syncSettings = nextSync;
-      unawaited(_sync.pushRemoteState(buildState(), nextSync, lastSyncAt: lastSyncAt));
+      await _sync.pushRemoteState(
+        buildState(),
+        nextSync,
+        lastSyncAt: lastSyncAt,
+      );
+      _clearDirtySyncState();
+      lastSyncAt = DateTime.now().millisecondsSinceEpoch;
     }
+    unawaited(_startRealtimeSync());
     syncStatus = signUp
         ? 'Account created. Local data synced to workspace.'
         : 'Signed in. Local data synced to workspace.';
@@ -627,7 +661,9 @@ class AdoetzAppState extends ChangeNotifier {
     userName = 'Guest';
     syncSettings = syncSettings.copyWith(enabled: false);
     syncStatus = 'Guest mode. Local sessions are saved on this device.';
+    _clearDirtySyncState();
     notifyListeners();
+    unawaited(_sync.unsubscribeRemoteChanges());
     unawaited(_persist());
   }
 
@@ -646,7 +682,9 @@ class AdoetzAppState extends ChangeNotifier {
     userName = result.user.label;
     syncSettings = syncSettings.copyWith(enabled: true);
     await _sync.pushRemoteState(buildState(), syncSettings, lastSyncAt: lastSyncAt);
+    _clearDirtySyncState();
     lastSyncAt = DateTime.now().millisecondsSinceEpoch;
+    unawaited(_startRealtimeSync());
     syncStatus = 'Guest session saved and synced to database.';
     notifyListeners();
     await _persist();
@@ -670,7 +708,9 @@ class AdoetzAppState extends ChangeNotifier {
       notifyListeners();
       
       await _sync.pushRemoteState(buildState(), syncSettings, lastSyncAt: lastSyncAt);
+      _clearDirtySyncState();
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
+      unawaited(_startRealtimeSync());
       syncStatus = 'Successfully migrated to Supabase.';
     } catch (error) {
       syncStatus = error.toString().replaceFirst('Exception: ', '');
@@ -688,6 +728,9 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
+    _remoteSyncTimer?.cancel();
+    _clearDirtySyncState();
+    await _sync.unsubscribeRemoteChanges();
     currentUser = null;
     authToken = '';
     userName = 'User';
@@ -844,7 +887,12 @@ class AdoetzAppState extends ChangeNotifier {
       sessions = [forked, ...sessions];
       currentSessionId = forked.id;
       notifyListeners();
-      unawaited(_persistAndScheduleRemote());
+      unawaited(
+        _persistAndScheduleRemote(
+          sessionIds: [forked.id],
+          settingsChanged: false,
+        ),
+      );
       return;
     }
 
@@ -908,7 +956,12 @@ class AdoetzAppState extends ChangeNotifier {
           }
           return s;
         }).toList();
-        unawaited(_persistAndScheduleRemote());
+        unawaited(
+          _persistAndScheduleRemote(
+            sessionIds: [currentSessionId],
+            settingsChanged: false,
+          ),
+        );
       }
       currentView = AppView.chat;
       notifyListeners();
@@ -920,7 +973,12 @@ class AdoetzAppState extends ChangeNotifier {
     currentSessionId = session.id;
     currentView = AppView.chat;
     notifyListeners();
-    unawaited(_persistAndScheduleRemote());
+    unawaited(
+      _persistAndScheduleRemote(
+        sessionIds: [session.id],
+        settingsChanged: false,
+      ),
+    );
   }
 
   void startChatWithConnector(String connectorId) {
@@ -1226,7 +1284,12 @@ class AdoetzAppState extends ChangeNotifier {
           }
           return s;
         }).toList();
-        unawaited(_persistAndScheduleRemote());
+        unawaited(
+          _persistAndScheduleRemote(
+            sessionIds: [currentSessionId],
+            settingsChanged: false,
+          ),
+        );
       }
       currentView = AppView.chat;
       notifyListeners();
@@ -1238,7 +1301,12 @@ class AdoetzAppState extends ChangeNotifier {
     currentSessionId = session.id;
     currentView = AppView.chat;
     notifyListeners();
-    unawaited(_persistAndScheduleRemote());
+    unawaited(
+      _persistAndScheduleRemote(
+        sessionIds: [session.id],
+        settingsChanged: false,
+      ),
+    );
   }
 
   void headerChatShortcut() {
@@ -1264,6 +1332,7 @@ class AdoetzAppState extends ChangeNotifier {
 
   void deleteSession(String id) {
     final now = DateTime.now().millisecondsSinceEpoch;
+    final changedSessionIds = <String>{id};
     sessions = sessions
         .map(
           (session) => session.id == id
@@ -1275,11 +1344,17 @@ class AdoetzAppState extends ChangeNotifier {
       final session = Session.empty(null, activeChatTarget.id);
       sessions = [...sessions, session];
       currentSessionId = session.id;
+      changedSessionIds.add(session.id);
     } else if (id == currentSessionId) {
       currentSessionId = activeSessions.first.id;
     }
     notifyListeners();
-    unawaited(_persistAndScheduleRemote());
+    unawaited(
+      _persistAndScheduleRemote(
+        sessionIds: changedSessionIds,
+        settingsChanged: false,
+      ),
+    );
   }
 
   void pinSession(String id) {
@@ -1294,7 +1369,9 @@ class AdoetzAppState extends ChangeNotifier {
         )
         .toList();
     notifyListeners();
-    unawaited(_persistAndScheduleRemote());
+    unawaited(
+      _persistAndScheduleRemote(sessionIds: [id], settingsChanged: false),
+    );
   }
 
   void renameSession(String id, String title) {
@@ -1310,13 +1387,17 @@ class AdoetzAppState extends ChangeNotifier {
         )
         .toList();
     notifyListeners();
-    unawaited(_persistAndScheduleRemote());
+    unawaited(
+      _persistAndScheduleRemote(sessionIds: [id], settingsChanged: false),
+    );
   }
 
   void clearAllSessions() {
     final now = DateTime.now().millisecondsSinceEpoch;
+    final changedSessionIds = <String>{};
     sessions = sessions.map((item) {
       if (!item.currentTargetId.startsWith('agent:')) {
+        changedSessionIds.add(item.id);
         return item.copyWith(deleted: true, updatedAt: now);
       }
       return item;
@@ -1328,19 +1409,27 @@ class AdoetzAppState extends ChangeNotifier {
       final session = Session.empty(null, 'model:$selectedModel');
       sessions = [...sessions, session];
       currentSessionId = session.id;
+      changedSessionIds.add(session.id);
     } else if (sessions.firstWhere((s) => s.id == currentSessionId).deleted) {
       currentSessionId = active.first.id;
     }
 
     currentView = AppView.chat;
     notifyListeners();
-    unawaited(_persistAndScheduleRemote());
+    unawaited(
+      _persistAndScheduleRemote(
+        sessionIds: changedSessionIds,
+        settingsChanged: false,
+      ),
+    );
   }
 
   void clearAgentSessions(String connectorId) {
     final now = DateTime.now().millisecondsSinceEpoch;
+    final changedSessionIds = <String>{};
     sessions = sessions.map((item) {
       if (item.currentTargetId == 'agent:$connectorId') {
+        changedSessionIds.add(item.id);
         return item.copyWith(deleted: true, updatedAt: now);
       }
       return item;
@@ -1352,12 +1441,18 @@ class AdoetzAppState extends ChangeNotifier {
       final session = Session.empty(null, 'model:$selectedModel');
       sessions = [...sessions, session];
       currentSessionId = session.id;
+      changedSessionIds.add(session.id);
     } else if (sessions.firstWhere((s) => s.id == currentSessionId).deleted) {
       currentSessionId = active.first.id;
     }
 
     notifyListeners();
-    unawaited(_persistAndScheduleRemote());
+    unawaited(
+      _persistAndScheduleRemote(
+        sessionIds: changedSessionIds,
+        settingsChanged: false,
+      ),
+    );
   }
 
   void updateMemory(String id, String content) {
@@ -2075,7 +2170,12 @@ class AdoetzAppState extends ChangeNotifier {
   void updateSyncSettings(SyncSettings value) {
     syncSettings = value;
     notifyListeners();
-    unawaited(_persist(touchSavedAt: false));
+    if (!value.enabled || !value.useSupabase) {
+      unawaited(_sync.unsubscribeRemoteChanges());
+    } else {
+      unawaited(_startRealtimeSync());
+    }
+    unawaited(_persistAndScheduleRemote());
   }
 
   void updateCustomCounters(List<CustomCounter> value) {
@@ -2143,15 +2243,29 @@ class AdoetzAppState extends ChangeNotifier {
     }
     syncStatus = 'Syncing...';
     notifyListeners();
+    _remoteSyncTimer?.cancel();
+    final previousLastSyncAt = lastSyncAt;
+    final changedSessionIds = Set<String>.from(_dirtySessionIds);
+    final pushSettings = _dirtySettings || changedSessionIds.isEmpty;
+    _dirtySessionIds.clear();
+    _dirtySettings = false;
     try {
       final remote = await _sync.pullRemoteState(authToken, syncSettings);
       if (remote != null) {
-        _applyState(_mergeRemote(buildState(), remote), notify: false);
+        await _applyRemoteSyncState(_mergeRemote(buildState(), remote));
       }
-      await _sync.pushRemoteState(buildState(), syncSettings, lastSyncAt: lastSyncAt);
+      await _sync.pushRemoteState(
+        buildState(),
+        syncSettings,
+        lastSyncAt: previousLastSyncAt,
+        changedSessionIds: changedSessionIds.isEmpty ? null : changedSessionIds,
+        settingsChanged: pushSettings,
+      );
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
       syncStatus = 'Successfully synced to database.';
     } catch (error) {
+      _dirtySessionIds.addAll(changedSessionIds);
+      _dirtySettings = _dirtySettings || pushSettings;
       syncStatus = error.toString().replaceFirst('Exception: ', '');
     }
     notifyListeners();
@@ -2159,6 +2273,7 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void _replaceSession(String id, Session next) {
+    if (!_applyingRemoteSync) _dirtySessionIds.add(id);
     sessions = sessions
         .map((session) => session.id == id ? next : session)
         .toList();
@@ -2604,6 +2719,99 @@ class AdoetzAppState extends ChangeNotifier {
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
 
+  Future<void> _startRealtimeSync() async {
+    if (currentUser == null ||
+        currentUser!.isGuest ||
+        authToken.isEmpty ||
+        !syncSettings.enabled ||
+        !syncSettings.useSupabase) {
+      await _sync.unsubscribeRemoteChanges();
+      return;
+    }
+    try {
+      await _sync.subscribeToRemoteChanges(
+        authToken,
+        syncSettings,
+        onSettings: (remote) {
+          unawaited(_applyRemoteSettingsChange(remote));
+        },
+        onSession: (session) {
+          unawaited(_applyRemoteSessionChange(session));
+        },
+        onError: (error) {
+          syncStatus =
+              'Realtime sync: ${error.toString().replaceFirst('Exception: ', '')}';
+          notifyListeners();
+        },
+      );
+    } catch (error) {
+      syncStatus =
+          'Realtime sync: ${error.toString().replaceFirst('Exception: ', '')}';
+      notifyListeners();
+    }
+  }
+
+  Future<void> _applyRemoteSettingsChange(PersistedAppState remote) async {
+    if (_applyingRemoteSync || currentUser == null || currentUser!.isGuest) {
+      return;
+    }
+    final merged = _mergeRemote(buildState(), remote);
+    await _applyRemoteSyncState(merged);
+  }
+
+  Future<void> _applyRemoteSessionChange(Session remoteSession) async {
+    if (_applyingRemoteSync || currentUser == null || currentUser!.isGuest) {
+      return;
+    }
+    final existingIndex = sessions.indexWhere(
+      (session) => session.id == remoteSession.id,
+    );
+    if (existingIndex != -1 &&
+        sessions[existingIndex].updatedAt >= remoteSession.updatedAt) {
+      return;
+    }
+
+    _applyingRemoteSync = true;
+    try {
+      if (existingIndex == -1) {
+        sessions = [remoteSession, ...sessions];
+      } else {
+        final next = [...sessions];
+        next[existingIndex] = remoteSession;
+        sessions = next;
+      }
+      final active = activeSessions;
+      if (active.isNotEmpty &&
+          !active.any((session) => session.id == currentSessionId)) {
+        currentSessionId = active.first.id;
+      }
+      lastSyncAt = DateTime.now().millisecondsSinceEpoch;
+      syncStatus = 'Database sync updated.';
+      notifyListeners();
+      await _persist(touchSavedAt: false);
+    } finally {
+      _applyingRemoteSync = false;
+    }
+  }
+
+  Future<void> _applyRemoteSyncState(PersistedAppState state) async {
+    _applyingRemoteSync = true;
+    try {
+      _applyState(state, notify: false);
+      lastSyncAt = DateTime.now().millisecondsSinceEpoch;
+      syncStatus = 'Database sync updated.';
+      notifyListeners();
+      await _persist(touchSavedAt: false);
+    } finally {
+      _applyingRemoteSync = false;
+    }
+  }
+
+  void _clearDirtySyncState() {
+    _dirtySessionIds.clear();
+    _dirtySettings = false;
+  }
+
   Future<void> _persist({bool touchSavedAt = true}) async {
     if (touchSavedAt) {
       _stateSavedAt = DateTime.now().millisecondsSinceEpoch;
@@ -2613,36 +2821,66 @@ class AdoetzAppState extends ChangeNotifier {
     await _storage.save(buildState());
   }
 
-  Future<void> _persistAndScheduleRemote() async {
+  Future<void> _persistAndScheduleRemote({
+    Iterable<String> sessionIds = const [],
+    bool settingsChanged = true,
+  }) async {
     await _persist();
-    _scheduleRemoteSync();
+    _scheduleRemoteSync(
+      sessionIds: sessionIds,
+      settingsChanged: settingsChanged,
+    );
   }
 
-  void _scheduleRemoteSync() {
+  void _scheduleRemoteSync({
+    Iterable<String> sessionIds = const [],
+    bool settingsChanged = true,
+  }) {
+    if (_applyingRemoteSync) return;
     if (currentUser == null ||
         currentUser!.isGuest ||
         authToken.isEmpty ||
         !syncSettings.enabled) {
       return;
     }
-    final hashState = buildState().toJson(includeSecrets: true)
-      ..remove('savedAt');
-    final stateHash = jsonEncode(hashState);
-    if (stateHash == lastPushedHash) return;
+    if (settingsChanged) _dirtySettings = true;
+    _dirtySessionIds.addAll(
+      sessionIds.where((id) => id.trim().isNotEmpty),
+    );
+    if (!_dirtySettings && _dirtySessionIds.isEmpty) return;
+
     _remoteSyncTimer?.cancel();
-    _remoteSyncTimer = Timer(const Duration(seconds: 15), () async {
+    _remoteSyncTimer = Timer(const Duration(seconds: 2), () async {
+      final changedSessionIds = Set<String>.from(_dirtySessionIds);
+      final pushSettings = _dirtySettings;
+      _dirtySessionIds.clear();
+      _dirtySettings = false;
       try {
         syncStatus = 'Syncing to remote...';
         notifyListeners();
-        await _sync.pushRemoteState(buildState(), syncSettings, lastSyncAt: lastSyncAt);
-        lastPushedHash = stateHash;
+        await _sync.pushRemoteState(
+          buildState(),
+          syncSettings,
+          lastSyncAt: lastSyncAt,
+          changedSessionIds: changedSessionIds,
+          settingsChanged: pushSettings,
+        );
+        lastPushedHash = jsonEncode(
+          buildState().toJson(includeSecrets: true)..remove('savedAt'),
+        );
         lastSyncAt = DateTime.now().millisecondsSinceEpoch;
         syncStatus = 'Successfully synced to database.';
         notifyListeners();
         await _persist(touchSavedAt: false);
       } catch (error) {
+        _dirtySessionIds.addAll(changedSessionIds);
+        _dirtySettings = _dirtySettings || pushSettings;
         syncStatus = error.toString().replaceFirst('Exception: ', '');
         notifyListeners();
+        _remoteSyncTimer?.cancel();
+        _remoteSyncTimer = Timer(const Duration(seconds: 10), () {
+          _scheduleRemoteSync(settingsChanged: false);
+        });
       }
     });
   }
@@ -2657,6 +2895,7 @@ class AdoetzAppState extends ChangeNotifier {
     _cancelStreamFlush(resetText: true);
     _ai.dispose();
     unawaited(LiveForegroundService.stop());
+    unawaited(_sync.unsubscribeRemoteChanges());
     super.dispose();
   }
 }

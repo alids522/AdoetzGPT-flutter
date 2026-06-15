@@ -22,8 +22,39 @@ class SyncService {
   static const _uuid = Uuid();
   static const defaultWebApiBaseUrl = 'http://127.0.0.1:3000';
 
+  supa.SupabaseClient? _realtimeClient;
+  supa.RealtimeChannel? _realtimeChannel;
+  String _realtimeKey = '';
+
   bool shouldUseDirectPostgres(SyncSettings settings) =>
       !kIsWeb && settings.apiBaseUrl.trim().isEmpty;
+
+  supa.SupabaseClient _supabaseAuthClient(SyncSettings settings) {
+    return supa.SupabaseClient(
+      settings.supabaseUrl,
+      settings.supabaseAnonKey,
+      authOptions: const supa.FlutterAuthClientOptions(
+        localStorage: supa.EmptyLocalStorage(),
+        authFlowType: supa.AuthFlowType.implicit,
+      ),
+    );
+  }
+
+  supa.SupabaseClient _supabaseSessionClient(
+    SyncSettings settings,
+    String token,
+  ) {
+    return supa.SupabaseClient(
+      settings.supabaseUrl,
+      settings.supabaseAnonKey,
+      headers: {'Authorization': 'Bearer $token'},
+      accessToken: () async => token,
+      authOptions: const supa.FlutterAuthClientOptions(
+        localStorage: supa.EmptyLocalStorage(),
+        authFlowType: supa.AuthFlowType.implicit,
+      ),
+    );
+  }
 
   Future<AuthResult> signUp(
     String username,
@@ -31,14 +62,7 @@ class SyncService {
     SyncSettings settings,
   ) async {
     if (settings.useSupabase) {
-      final client = supa.SupabaseClient(
-        settings.supabaseUrl, 
-        settings.supabaseAnonKey,
-        authOptions: const supa.FlutterAuthClientOptions(
-          localStorage: supa.EmptyLocalStorage(),
-          authFlowType: supa.AuthFlowType.implicit,
-        ),
-      );
+      final client = _supabaseAuthClient(settings);
       final res = await client.auth.signUp(email: username, password: password);
       if (res.user == null || res.session == null) {
         throw Exception('Supabase signup failed. Please ensure you provide a valid email format.');
@@ -81,14 +105,7 @@ class SyncService {
     SyncSettings settings,
   ) async {
     if (settings.useSupabase) {
-      final client = supa.SupabaseClient(
-        settings.supabaseUrl, 
-        settings.supabaseAnonKey,
-        authOptions: const supa.FlutterAuthClientOptions(
-          localStorage: supa.EmptyLocalStorage(),
-          authFlowType: supa.AuthFlowType.implicit,
-        ),
-      );
+      final client = _supabaseAuthClient(settings);
       final res = await client.auth.signInWithPassword(email: username, password: password);
       if (res.user == null || res.session == null) {
         throw Exception('Supabase login failed.');
@@ -96,10 +113,7 @@ class SyncService {
       
       PersistedAppState? remoteState;
       try {
-        final stateRes = await client.from('app_states').select().eq('id', res.user!.id).maybeSingle();
-        if (stateRes != null && stateRes['state'] != null) {
-          remoteState = PersistedAppState.fromJson(Map<String, dynamic>.from(stateRes['state']));
-        }
+        remoteState = await _supabasePullStateForUser(client, res.user!.id);
       } catch (e) {
         debugPrint('Failed to pull initial state from Supabase: $e');
       }
@@ -147,36 +161,9 @@ class SyncService {
       if (token.startsWith('direct:')) {
         throw Exception('Your current session is from Postgres. Please log out and sign in to Supabase to sync.');
       }
-      final client = supa.SupabaseClient(
-        settings.supabaseUrl, 
-        settings.supabaseAnonKey,
-        headers: {'Authorization': 'Bearer $token'},
-        authOptions: const supa.FlutterAuthClientOptions(
-          localStorage: supa.EmptyLocalStorage(),
-          authFlowType: supa.AuthFlowType.implicit,
-        ),
-      );
-      // Extract user ID from Supabase JWT token
-      String userId = '';
-      try {
-        final parts = token.split('.');
-        if (parts.length == 3) {
-          final payload = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
-          userId = jsonDecode(payload)['sub'] ?? '';
-        }
-      } catch (_) {}
-
-      final settingsRes = await client.from('user_settings').select().eq('user_id', userId).maybeSingle();
-      final sessionsRes = await client.from('chat_sessions').select().eq('user_id', userId);
-      
-      final combined = <String, dynamic>{};
-      if (settingsRes != null && settingsRes['state'] != null) {
-        combined.addAll(Map<String, dynamic>.from(settingsRes['state']));
-      }
-      if (sessionsRes.isNotEmpty) {
-        combined['sessions'] = sessionsRes.map((r) => r['session']).toList();
-      }
-      return combined.isNotEmpty ? PersistedAppState.fromJson(combined) : null;
+      final client = _supabaseSessionClient(settings, token);
+      final userId = _supabaseUserIdFromToken(token);
+      return _supabasePullStateForUser(client, userId);
     }
 
     if (shouldUseDirectPostgres(settings)) {
@@ -207,9 +194,116 @@ class SyncService {
     return combined.isNotEmpty ? PersistedAppState.fromJson(combined) : null;
   }
 
-  Future<void> pushRemoteState(PersistedAppState state, SyncSettings settings, {int? lastSyncAt}) async {
+  Future<void> subscribeToRemoteChanges(
+    String token,
+    SyncSettings settings, {
+    required void Function(PersistedAppState state) onSettings,
+    required void Function(Session session) onSession,
+    void Function(Object error)? onError,
+  }) async {
+    if (!settings.enabled || !settings.useSupabase || token.isEmpty) {
+      await unsubscribeRemoteChanges();
+      return;
+    }
+    if (token.startsWith('direct:')) {
+      await unsubscribeRemoteChanges();
+      return;
+    }
+
+    final userId = _supabaseUserIdFromToken(token);
+    if (userId.isEmpty) return;
+
+    final key = '${settings.supabaseUrl}|$userId';
+    if (_realtimeChannel != null && _realtimeKey == key) return;
+    await unsubscribeRemoteChanges();
+
+    final client = _supabaseSessionClient(settings, token);
+    final channel = client
+        .channel('adoetzgpt-sync-$userId')
+        .onPostgresChanges(
+          event: supa.PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'user_settings',
+          filter: supa.PostgresChangeFilter(
+            type: supa.PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: userId,
+          ),
+          callback: (payload) {
+            try {
+              final row = payload.newRecord.isNotEmpty
+                  ? payload.newRecord
+                  : payload.oldRecord;
+              final remote = _stateFromValue(row['state']);
+              if (remote != null) onSettings(remote);
+            } catch (error) {
+              onError?.call(error);
+            }
+          },
+        )
+        .onPostgresChanges(
+          event: supa.PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'chat_sessions',
+          filter: supa.PostgresChangeFilter(
+            type: supa.PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: userId,
+          ),
+          callback: (payload) {
+            try {
+              final row = payload.newRecord.isNotEmpty
+                  ? payload.newRecord
+                  : payload.oldRecord;
+              final sessionJson = _jsonMapFromValue(row['session']);
+              if (sessionJson != null) {
+                onSession(Session.fromJson(sessionJson));
+              }
+            } catch (error) {
+              onError?.call(error);
+            }
+          },
+        );
+
+    channel.subscribe((status, error) {
+      if (status == supa.RealtimeSubscribeStatus.channelError ||
+          status == supa.RealtimeSubscribeStatus.timedOut) {
+        onError?.call(error ?? 'Supabase realtime subscription failed.');
+      }
+    });
+
+    _realtimeClient = client;
+    _realtimeChannel = channel;
+    _realtimeKey = key;
+  }
+
+  Future<void> unsubscribeRemoteChanges() async {
+    final client = _realtimeClient;
+    final channel = _realtimeChannel;
+    _realtimeClient = null;
+    _realtimeChannel = null;
+    _realtimeKey = '';
+    if (client == null || channel == null) return;
+    try {
+      await client.removeChannel(channel);
+    } finally {
+      await client.dispose();
+    }
+  }
+
+  Future<void> pushRemoteState(
+    PersistedAppState state,
+    SyncSettings settings, {
+    int? lastSyncAt,
+    Iterable<String>? changedSessionIds,
+    bool settingsChanged = true,
+  }) async {
     if (!settings.enabled || state.authToken.isEmpty) return;
     final token = state.authToken;
+    final changedIds = changedSessionIds
+        ?.where((id) => id.trim().isNotEmpty)
+        .toSet();
+    if (!settingsChanged && changedIds != null && changedIds.isEmpty) return;
     
     bool pushSuccess = false;
 
@@ -217,29 +311,25 @@ class SyncService {
       if (token.startsWith('direct:')) {
         throw Exception('Your current session is from Postgres. Please log out and sign in to Supabase to sync.');
       }
-      final client = supa.SupabaseClient(
-        settings.supabaseUrl, 
-        settings.supabaseAnonKey, 
-        headers: {'Authorization': 'Bearer $token'},
-        authOptions: const supa.FlutterAuthClientOptions(
-          localStorage: supa.EmptyLocalStorage(),
-          authFlowType: supa.AuthFlowType.implicit,
-        ),
-      );
+      final client = _supabaseSessionClient(settings, token);
       final userId = state.currentUser?.id;
       if (userId == null) return;
       
-      final settingsJson = state.toJson(includeSecrets: true);
-      settingsJson.remove('sessions');
-      await client.from('user_settings').upsert({
-        'user_id': userId,
-        'state': settingsJson,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      });
+      if (settingsChanged) {
+        final settingsJson = _remoteStateJson(state);
+        settingsJson.remove('sessions');
+        await client.from('user_settings').upsert({
+          'user_id': userId,
+          'state': settingsJson,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        });
+      }
       
-      final sessionsToPush = lastSyncAt != null
-          ? state.sessions.where((s) => s.updatedAt > lastSyncAt).toList()
-          : state.sessions;
+      final sessionsToPush = _sessionsForDelta(
+        state,
+        lastSyncAt: lastSyncAt,
+        changedSessionIds: changedIds,
+      );
           
       for (final s in sessionsToPush) {
         await client.from('chat_sessions').upsert({
@@ -254,9 +344,21 @@ class SyncService {
       if (!token.startsWith('direct:')) {
         throw Exception('Your current session is from Supabase. Please log out and sign in to Postgres to sync.');
       }
-      await _directPushState(token, state, settings.database, lastSyncAt: lastSyncAt);
+      await _directPushState(
+        token,
+        state,
+        settings.database,
+        lastSyncAt: lastSyncAt,
+        changedSessionIds: changedIds,
+        settingsChanged: settingsChanged,
+      );
       pushSuccess = true;
     } else {
+      final sessionsToPush = _sessionsForDelta(
+        state,
+        lastSyncAt: lastSyncAt,
+        changedSessionIds: changedIds,
+      );
       final response = await _postJson(
         settings,
         '/api/sync/push',
@@ -266,9 +368,9 @@ class SyncService {
             s.remove('sessions'); 
             return s; 
           })(),
-          'sessions': (lastSyncAt != null 
-              ? state.sessions.where((s) => s.updatedAt > lastSyncAt).toList() 
-              : state.sessions).map((s) => {'id': s.id, 'session': s.toJson()}).toList(),
+          'sessions': sessionsToPush
+              .map((s) => {'id': s.id, 'session': s.toJson()})
+              .toList(),
           'dbConfig': _databasePayload(settings.database),
         },
         headers: {'Authorization': 'Bearer $token'},
@@ -296,6 +398,9 @@ class SyncService {
               clonedPasswordHash: state.cachedPasswordHash != null && state.cachedPasswordHash!.isNotEmpty 
                   ? state.cachedPasswordHash! 
                   : r'$2a$10$XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+              lastSyncAt: lastSyncAt,
+              changedSessionIds: changedIds,
+              settingsChanged: settingsChanged,
             );
           } else if (shouldUseDirectPostgres(settings)) {
             final primaryConn = await _open(settings.database);
@@ -316,6 +421,9 @@ class SyncService {
                 clonedUserId: userRow[0] as String,
                 clonedUsername: userRow[1] as String,
                 clonedPasswordHash: userRow[2] as String,
+                lastSyncAt: lastSyncAt,
+                changedSessionIds: changedIds,
+                settingsChanged: settingsChanged,
               );
             } finally {
               await primaryConn.close();
@@ -393,6 +501,47 @@ class SyncService {
     );
   }
 
+  Future<PersistedAppState?> _supabasePullStateForUser(
+    supa.SupabaseClient client,
+    String userId,
+  ) async {
+    if (userId.isEmpty) return null;
+
+    final settingsRes = await client
+        .from('user_settings')
+        .select()
+        .eq('user_id', userId)
+        .maybeSingle();
+    final sessionsRes = await client
+        .from('chat_sessions')
+        .select()
+        .eq('user_id', userId);
+
+    final combined = <String, dynamic>{};
+    if (settingsRes != null && settingsRes['state'] != null) {
+      final settingsState = _jsonMapFromValue(settingsRes['state']);
+      if (settingsState != null) combined.addAll(settingsState);
+    }
+    if (sessionsRes.isNotEmpty) {
+      combined['sessions'] = sessionsRes
+          .map((row) => _jsonMapFromValue(row['session']))
+          .whereType<Map<String, dynamic>>()
+          .toList();
+    }
+    return combined.isNotEmpty ? PersistedAppState.fromJson(combined) : null;
+  }
+
+  String _supabaseUserIdFromToken(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return '';
+      final payload = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+      return stringValue(jsonDecode(payload)['sub']);
+    } catch (_) {
+      return '';
+    }
+  }
+
   Map<String, dynamic> _databasePayload(DatabaseSettings db) => {
     'databaseUrl': db.databaseUrl.trim(),
     'database': db.database.trim(),
@@ -405,6 +554,7 @@ class SyncService {
   Map<String, dynamic> _remoteStateJson(PersistedAppState state) {
     final json = state.toJson(includeSecrets: true);
     json['authToken'] = '';
+    json.remove('lastSyncAt');
     final sync = Map<String, dynamic>.from(json['syncSettings']);
     final db = Map<String, dynamic>.from(sync['database']);
     db['password'] = '';
@@ -412,6 +562,25 @@ class SyncService {
     json['syncSettings'] = sync;
     json.remove('cachedPasswordHash');
     return json;
+  }
+
+  List<Session> _sessionsForDelta(
+    PersistedAppState state, {
+    int? lastSyncAt,
+    Set<String>? changedSessionIds,
+  }) {
+    if (changedSessionIds != null) {
+      if (changedSessionIds.isEmpty) return const [];
+      return state.sessions
+          .where((session) => changedSessionIds.contains(session.id))
+          .toList();
+    }
+    if (lastSyncAt != null) {
+      return state.sessions
+          .where((session) => session.updatedAt > lastSyncAt)
+          .toList();
+    }
+    return state.sessions;
   }
 
   Future<AuthResult> _directSignUp(
@@ -444,7 +613,7 @@ class SyncService {
       );
       await conn.execute(
         pg.Sql(
-          'INSERT INTO ${_quote(schema)}.app_states (user_id, state) VALUES (\$1, \'{}\'::jsonb)',
+          'INSERT INTO ${_quote(schema)}.user_settings (user_id, state) VALUES (\$1, \'{}\'::jsonb)',
         ),
         parameters: [id],
       );
@@ -482,15 +651,7 @@ class SyncService {
         throw Exception('Invalid username or password.');
       }
       final user = _publicUser(row);
-      final stateResult = await conn.execute(
-        pg.Sql(
-          'SELECT state FROM ${_quote(schema)}.app_states WHERE user_id = \$1',
-        ),
-        parameters: [user.id],
-      );
-      final remote = stateResult.isEmpty
-          ? null
-          : _stateFromValue(stateResult.first.toColumnMap()['state']);
+      final remote = await _directPullState(_directToken(user.id), db);
       return AuthResult(
         user: user,
         token: _directToken(user.id),
@@ -522,10 +683,14 @@ class SyncService {
       
       final combined = <String, dynamic>{};
       if (settingsResult.isNotEmpty && settingsResult.first[0] != null) {
-        combined.addAll(settingsResult.first[0] as Map<String, dynamic>);
+        final settingsState = _jsonMapFromValue(settingsResult.first[0]);
+        if (settingsState != null) combined.addAll(settingsState);
       }
       if (sessionsResult.isNotEmpty) {
-        combined['sessions'] = sessionsResult.map((r) => r[1] as Map<String, dynamic>).toList();
+        combined['sessions'] = sessionsResult
+            .map((row) => _jsonMapFromValue(row[1]))
+            .whereType<Map<String, dynamic>>()
+            .toList();
       }
       return combined.isNotEmpty ? PersistedAppState.fromJson(combined) : null;
     } finally {
@@ -540,6 +705,9 @@ class SyncService {
     required String clonedUserId,
     required String clonedUsername,
     required String clonedPasswordHash,
+    int? lastSyncAt,
+    Set<String>? changedSessionIds,
+    bool settingsChanged = true,
   }) async {
     final conn = await _open(backupDb);
     try {
@@ -561,23 +729,32 @@ class SyncService {
       );
 
       final targetUserId = userResult.first[0] as String;
-      final settingsJson = state.toJson(includeSecrets: true);
-      settingsJson.remove('sessions');
       
       await conn.execute('BEGIN');
-      await conn.execute(
-        pg.Sql.named(
-          'INSERT INTO ${_quote(schema)}."user_settings" (user_id, state) '
-          'VALUES (@id, @state::jsonb) '
-          'ON CONFLICT (user_id) DO UPDATE SET state = @state::jsonb, updated_at = CURRENT_TIMESTAMP',
-        ),
-        parameters: {
-          'id': targetUserId,
-          'state': jsonEncode(settingsJson),
-        },
-      );
+      if (settingsChanged) {
+        final settingsJson = state.toJson(includeSecrets: true);
+        settingsJson
+          ..remove('sessions')
+          ..remove('lastSyncAt');
+        await conn.execute(
+          pg.Sql.named(
+            'INSERT INTO ${_quote(schema)}."user_settings" (user_id, state) '
+            'VALUES (@id, @state::jsonb) '
+            'ON CONFLICT (user_id) DO UPDATE SET state = @state::jsonb, updated_at = CURRENT_TIMESTAMP',
+          ),
+          parameters: {
+            'id': targetUserId,
+            'state': jsonEncode(settingsJson),
+          },
+        );
+      }
       
-      for (final s in state.sessions) {
+      final sessionsToPush = _sessionsForDelta(
+        state,
+        lastSyncAt: lastSyncAt,
+        changedSessionIds: changedSessionIds,
+      );
+      for (final s in sessionsToPush) {
         await conn.execute(
           pg.Sql.named(
             'INSERT INTO ${_quote(schema)}."chat_sessions" (id, user_id, session) '
@@ -601,7 +778,11 @@ class SyncService {
     String token,
     PersistedAppState state,
     DatabaseSettings db,
-    {int? lastSyncAt}
+    {
+    int? lastSyncAt,
+    Set<String>? changedSessionIds,
+    bool settingsChanged = true,
+  }
   ) async {
     final userId = _directUserId(token);
     if (userId.isEmpty) throw Exception('Invalid direct Postgres auth token.');
@@ -610,22 +791,25 @@ class SyncService {
     try {
       final schema = _schema(db);
       await _ensurePostgres(conn, schema);
-      
-      final stateJson = _remoteStateJson(state);
-      stateJson.remove('sessions');
 
       await conn.execute('BEGIN');
-      await conn.execute(
-        pg.Sql(
-          'INSERT INTO ${_quote(schema)}.user_settings (user_id, state, updated_at) VALUES (\$1, \$2::jsonb, NOW()) '
-          'ON CONFLICT (user_id) DO UPDATE SET state = EXCLUDED.state, updated_at = NOW()',
-        ),
-        parameters: [userId, jsonEncode(stateJson)],
-      );
+      if (settingsChanged) {
+        final stateJson = _remoteStateJson(state);
+        stateJson.remove('sessions');
+        await conn.execute(
+          pg.Sql(
+            'INSERT INTO ${_quote(schema)}.user_settings (user_id, state, updated_at) VALUES (\$1, \$2::jsonb, NOW()) '
+            'ON CONFLICT (user_id) DO UPDATE SET state = EXCLUDED.state, updated_at = NOW()',
+          ),
+          parameters: [userId, jsonEncode(stateJson)],
+        );
+      }
 
-      final sessionsToPush = lastSyncAt != null
-          ? state.sessions.where((s) => s.updatedAt > lastSyncAt).toList()
-          : state.sessions;
+      final sessionsToPush = _sessionsForDelta(
+        state,
+        lastSyncAt: lastSyncAt,
+        changedSessionIds: changedSessionIds,
+      );
           
       for (final s in sessionsToPush) {
         await conn.execute(
@@ -745,14 +929,16 @@ CREATE TABLE IF NOT EXISTS $q.chat_sessions (
   }
 
   PersistedAppState? _stateFromValue(Object? value) {
+    final map = _jsonMapFromValue(value);
+    return map == null ? null : PersistedAppState.fromJson(map);
+  }
+
+  Map<String, dynamic>? _jsonMapFromValue(Object? value) {
     if (value == null) return null;
-    if (value is Map) {
-      return PersistedAppState.fromJson(Map<String, dynamic>.from(value));
-    }
+    if (value is Map) return Map<String, dynamic>.from(value);
     if (value is String && value.isNotEmpty) {
-      return PersistedAppState.fromJson(
-        Map<String, dynamic>.from(jsonDecode(value)),
-      );
+      final decoded = jsonDecode(value);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
     }
     return null;
   }

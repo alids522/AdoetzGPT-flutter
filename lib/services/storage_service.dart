@@ -79,6 +79,8 @@ class StorageService {
       soundEffectsEnabled: state.soundEffectsEnabled,
       isLiveVideoEnabled: state.isLiveVideoEnabled,
       isLiveFrontCamera: state.isLiveFrontCamera,
+      cachedPasswordHash: state.cachedPasswordHash,
+      lastSyncAt: state.lastSyncAt,
       savedAt: state.savedAt,
     );
   }
