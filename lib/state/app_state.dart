@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:bcrypt/bcrypt.dart';
@@ -111,6 +112,7 @@ class AdoetzAppState extends ChangeNotifier {
 
   Future<void> _playSound(String name) async {
     if (!soundEffectsEnabled) return;
+    if (!kIsWeb && Platform.isWindows) return;
     try {
       await _audioPlayer.play(AssetSource('audio/$name'));
     } catch (_) {}
@@ -2412,7 +2414,7 @@ class AdoetzAppState extends ChangeNotifier {
     syncStatus = 'Syncing...';
     notifyListeners();
     _remoteSyncTimer?.cancel();
-    final localBeforePull = buildState();
+    _remoteSyncTimer?.cancel();
     final changedSessionIds = Set<String>.from(_dirtySessionIds);
     var pushSettings = _dirtySettings;
     _dirtySessionIds.clear();
@@ -2430,7 +2432,12 @@ class AdoetzAppState extends ChangeNotifier {
         );
         pushSettings = pushSettings ||
             (currentLocal.savedAt ?? 0) > (remote.savedAt ?? 0);
-        await _applyRemoteSyncState(_mergeRemote(currentLocal, remote));
+        
+        final remoteIsNewer = (remote.savedAt ?? 0) > (currentLocal.savedAt ?? 0);
+        final remoteHasMoreSessions = remote.sessions.length > currentLocal.sessions.length;
+        if (remoteIsNewer || remoteHasMoreSessions) {
+          await _applyRemoteSyncState(_mergeRemote(currentLocal, remote));
+        }
       } else {
         changedSessionIds.addAll(_localSessionIdsToPush(currentLocal, null));
         pushSettings = true;
@@ -3134,10 +3141,16 @@ class AdoetzAppState extends ChangeNotifier {
             );
             pushSettings = pushSettings ||
                 (localBeforePush.savedAt ?? 0) > (remote.savedAt ?? 0);
-            await _applyRemoteSyncState(
-              _mergeRemote(localBeforePush, remote),
-            );
-            stateForPush = buildState();
+            
+            final remoteIsNewer = (remote.savedAt ?? 0) > (localBeforePush.savedAt ?? 0);
+            final remoteHasMoreSessions = remote.sessions.length > localBeforePush.sessions.length;
+            
+            if (remoteIsNewer || remoteHasMoreSessions) {
+              await _applyRemoteSyncState(
+                _mergeRemote(buildState(), remote),
+              );
+              stateForPush = buildState();
+            }
           }
         }
         await _sync.pushRemoteState(
