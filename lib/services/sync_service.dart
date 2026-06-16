@@ -308,7 +308,6 @@ class SyncService {
         .toSet();
     if (!settingsChanged && changedIds != null && changedIds.isEmpty) return;
     
-    bool pushSuccess = false;
     final errors = <String>[];
 
     if (settings.useSupabase) {
@@ -351,7 +350,6 @@ class SyncService {
             'updated_at': DateTime.now().toUtc().toIso8601String(),
           });
         }
-        pushSuccess = true;
       } catch (e) {
         errors.add('Supabase Primary Error: $e');
       }
@@ -368,7 +366,6 @@ class SyncService {
           changedSessionIds: changedIds,
           settingsChanged: settingsChanged,
         );
-        pushSuccess = true;
       } catch (e) {
         errors.add('Postgres Primary Error: $e');
       }
@@ -399,7 +396,6 @@ class SyncService {
         if (response.statusCode < 200 || response.statusCode >= 300) {
           throw Exception(data['error'] ?? 'Unable to push remote state.');
         }
-        pushSuccess = true;
       } catch (e) {
         errors.add('API Primary Error: $e');
       }
@@ -469,7 +465,6 @@ class SyncService {
               settingsChanged: settingsChanged,
             );
           }
-          pushSuccess = true;
         } catch (e) {
           errors.add('Backup Error (${db.databaseUrl}): $e');
         }

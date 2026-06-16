@@ -1018,6 +1018,8 @@ class GenerationSettings {
     this.googleSearchApiKey = '',
     this.googleSearchCx = '',
     this.tavilyApiKey = '',
+    this.mistralApiKey = '',
+    this.mistralAgentId = '',
     this.hapticStreamingEnabled = false,
     this.titleModelEnabled = true,
     this.titleModel = '',
@@ -1039,6 +1041,8 @@ class GenerationSettings {
   final String googleSearchApiKey;
   final String googleSearchCx;
   final String tavilyApiKey;
+  final String mistralApiKey;
+  final String mistralAgentId;
   final bool hapticStreamingEnabled;
   final bool titleModelEnabled;
   final String titleModel;
@@ -1060,6 +1064,8 @@ class GenerationSettings {
     String? googleSearchApiKey,
     String? googleSearchCx,
     String? tavilyApiKey,
+    String? mistralApiKey,
+    String? mistralAgentId,
     bool? hapticStreamingEnabled,
     bool? titleModelEnabled,
     String? titleModel,
@@ -1084,6 +1090,8 @@ class GenerationSettings {
       googleSearchApiKey: googleSearchApiKey ?? this.googleSearchApiKey,
       googleSearchCx: googleSearchCx ?? this.googleSearchCx,
       tavilyApiKey: tavilyApiKey ?? this.tavilyApiKey,
+      mistralApiKey: mistralApiKey ?? this.mistralApiKey,
+      mistralAgentId: mistralAgentId ?? this.mistralAgentId,
       hapticStreamingEnabled:
           hapticStreamingEnabled ?? this.hapticStreamingEnabled,
       titleModelEnabled: titleModelEnabled ?? this.titleModelEnabled,
@@ -1119,6 +1127,8 @@ class GenerationSettings {
       googleSearchApiKey: stringValue(json['googleSearchApiKey']),
       googleSearchCx: stringValue(json['googleSearchCx']),
       tavilyApiKey: stringValue(json['tavilyApiKey']),
+      mistralApiKey: stringValue(json['mistralApiKey']),
+      mistralAgentId: stringValue(json['mistralAgentId']),
       hapticStreamingEnabled: boolValue(json['hapticStreamingEnabled']),
       titleModelEnabled: json['titleModelEnabled'] ?? true,
       titleModel: stringValue(json['titleModel']),
@@ -1142,6 +1152,8 @@ class GenerationSettings {
     'googleSearchApiKey': googleSearchApiKey,
     'googleSearchCx': googleSearchCx,
     'tavilyApiKey': tavilyApiKey,
+    'mistralApiKey': mistralApiKey,
+    'mistralAgentId': mistralAgentId,
     'hapticStreamingEnabled': hapticStreamingEnabled,
     'titleModelEnabled': titleModelEnabled,
     'titleModel': titleModel,

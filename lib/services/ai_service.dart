@@ -1467,6 +1467,67 @@ $chatHistory
       return '\n\n[Web Search Results]\n${answer.isEmpty ? '' : 'Tavily AI Summary: $answer\n\n'}${_formatResults(results)}\n[End of Search Results]\n\nUsing the search results above as context, answer the user question. Cite source links when available:\n';
     }
 
+    if (engine == 'mistral') {
+      if (settings.mistralApiKey.isEmpty || settings.mistralAgentId.isEmpty) {
+        throw Exception('Mistral API Key or Agent ID is not configured.');
+      }
+      final request =
+          http.Request(
+              'POST',
+              Uri.parse('https://api.mistral.ai/v1/conversations'),
+            )
+            ..headers.addAll({
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'Authorization': 'Bearer ${settings.mistralApiKey}',
+            })
+            ..body = jsonEncode({
+              'agent_id': settings.mistralAgentId,
+              'inputs': [
+                {'role': 'user', 'content': query},
+              ],
+            });
+      final response = await _sendWithProxyFallback(_globalClient, request, syncSettings);
+      final body = await response.stream.bytesToString();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception(_extractApiError(body, 'Mistral web search failed.'));
+      }
+      final data = jsonDecode(body);
+      String text = '';
+      final outputs = data['outputs'];
+      if (outputs is List) {
+        final outputMsg = outputs.firstWhere(
+          (e) => e is Map && e['type'] == 'message.output',
+          orElse: () => null,
+        );
+        if (outputMsg != null) {
+          final content = outputMsg['content'];
+          if (content is List) {
+            for (var part in content) {
+              if (part is Map && part['type'] == 'text') {
+                text += stringValue(part['text']);
+              }
+              if (part is Map && part['type'] == 'tool_reference') {
+                final title = stringValue(part['title']);
+                final url = stringValue(part['url']);
+                if (title.isNotEmpty && url.isNotEmpty) {
+                  text += '\nSource: [$title]($url)\n';
+                }
+              }
+            }
+          } else if (content is String) {
+            text = content;
+          }
+        }
+      }
+      text = text.trim();
+      if (text.isEmpty) {
+        throw Exception('Mistral returned an empty search result.');
+      }
+      onStatus('Generated Mistral web search summary.');
+      return '\n\n[Web Search Results]\n$text\n[End of Search Results]\n\nUsing the search results above as context, answer the user question. Cite source links when available:\n';
+    }
+
     if (engine == 'endpoint') {
       final endpoint = endpoints
           .where((item) => item.id == settings.webSearchEndpointId)
@@ -1704,10 +1765,11 @@ $chatHistory
     }
     try {
       final data = jsonDecode(body);
-      return stringValue(
-        data['error'] is Map ? data['error']['message'] : data['error'],
-        fallback,
-      );
+      final errorNode = data['error'];
+      final message = errorNode is Map
+          ? errorNode['message']
+          : (errorNode ?? data['message']);
+      return stringValue(message, fallback);
     } catch (_) {
       if (trimmed.isEmpty) return fallback;
       return trimmed.length > 360 ? '${trimmed.substring(0, 360)}...' : trimmed;

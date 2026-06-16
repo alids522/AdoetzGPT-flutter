@@ -2132,6 +2132,7 @@ class _WebSearchSection extends StatelessWidget {
                   'duckduckgo',
                   'endpoint',
                   'tavily',
+                  'mistral',
                 ].map((engine) {
                   final selected = settings.webSearchEngine == engine;
                   return ChoiceChip(
@@ -2174,6 +2175,28 @@ class _WebSearchSection extends StatelessWidget {
               onChanged: (value) => app.updateGenerationSettings(
                 settings.copyWith(tavilyApiKey: value),
               ),
+            ),
+          ] else if (settings.webSearchEngine == 'mistral') ...[
+            _SettingField(
+              label: 'Mistral API Key',
+              initialValue: settings.mistralApiKey,
+              obscure: true,
+              onChanged: (value) => app.updateGenerationSettings(
+                settings.copyWith(mistralApiKey: value),
+              ),
+            ),
+            const SizedBox(height: 10),
+            _SettingField(
+              label: 'Mistral Agent ID',
+              initialValue: settings.mistralAgentId,
+              onChanged: (value) => app.updateGenerationSettings(
+                settings.copyWith(mistralAgentId: value),
+              ),
+            ),
+            const SizedBox(height: 5),
+            const Text(
+              'Create an agent with "Web Search" enabled at console.mistral.ai',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ] else if (settings.webSearchEngine == 'endpoint') ...[
             _DropdownSetting(
@@ -2241,6 +2264,7 @@ class _WebSearchSection extends StatelessWidget {
       'duckduckgo' => 'DuckDuckGo',
       'endpoint' => 'Endpoint',
       'tavily' => 'Tavily AI',
+      'mistral' => 'Mistral',
       _ => 'Gemini Grounding',
     };
   }
