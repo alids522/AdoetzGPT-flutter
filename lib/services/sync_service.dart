@@ -330,7 +330,14 @@ class SyncService {
           });
         }
         
-        final sessionsToPush = _sessionsForDelta(
+        final sessionCountRes = await client
+            .from('chat_sessions')
+            .select('id')
+            .eq('user_id', userId)
+            .limit(1);
+        final isNewDb = sessionCountRes.isEmpty;
+        
+        final sessionsToPush = isNewDb ? state.sessions : _sessionsForDelta(
           state,
           lastSyncAt: lastSyncAt,
           changedSessionIds: changedIds,
@@ -804,7 +811,13 @@ class SyncService {
         );
       }
       
-      final sessionsToPush = _sessionsForDelta(
+      final sessionCountResult = await conn.execute(
+        pg.Sql('SELECT COUNT(*) FROM ${_quote(schema)}."chat_sessions" WHERE user_id = \$1'),
+        parameters: [targetUserId],
+      );
+      final isNewDb = (sessionCountResult.first[0] as int) == 0;
+      
+      final sessionsToPush = isNewDb ? state.sessions : _sessionsForDelta(
         state,
         lastSyncAt: lastSyncAt,
         changedSessionIds: changedSessionIds,
@@ -860,7 +873,13 @@ class SyncService {
         );
       }
 
-      final sessionsToPush = _sessionsForDelta(
+      final sessionCountResult = await conn.execute(
+        pg.Sql('SELECT COUNT(*) FROM ${_quote(schema)}."chat_sessions" WHERE user_id = \$1'),
+        parameters: [userId],
+      );
+      final isNewDb = (sessionCountResult.first[0] as int) == 0;
+      
+      final sessionsToPush = isNewDb ? state.sessions : _sessionsForDelta(
         state,
         lastSyncAt: lastSyncAt,
         changedSessionIds: changedSessionIds,

@@ -807,7 +807,15 @@ class AdoetzAppState extends ChangeNotifier {
             password,
             syncSettings.copyWith(enabled: true),
           );
-    final nextSync = syncSettings.copyWith(enabled: true);
+          
+    final nextSync = (result.remoteState?.syncSettings ?? syncSettings).copyWith(
+      enabled: true,
+      useSupabase: syncSettings.useSupabase,
+      database: syncSettings.database,
+      apiBaseUrl: syncSettings.apiBaseUrl,
+      supabaseUrl: syncSettings.supabaseUrl,
+      supabaseAnonKey: syncSettings.supabaseAnonKey,
+    );
     if (!signUp &&
         result.remoteState != null &&
         _hasRemoteData(result.remoteState!)) {
@@ -934,23 +942,39 @@ class AdoetzAppState extends ChangeNotifier {
     syncStatus = '';
     
     // Clear all local data so it doesn't leak into the next login/guest session
-    final session = Session.empty(null, 'model:gemini-2.5-flash');
-    sessions = [session];
-    currentSessionId = session.id;
-    memories = const [];
-    geminiApiKey = '';
-    endpoints = const [
-      EndpointConfig(
-        id: '1',
-        name: 'OpenAI',
-        url: 'https://api.openai.com/v1',
-        key: '',
-      ),
-    ];
-    tokenUsageData = const [];
-    customCounters = const [];
-    agentConnectors = const [];
-    modelContextOverrides = const {};
+    final defaults = PersistedAppState.defaults();
+    
+    sessions = defaults.sessions;
+    currentSessionId = defaults.currentSessionId;
+    memories = defaults.memories;
+    geminiApiKey = defaults.geminiApiKey;
+    endpoints = defaults.endpoints;
+    tokenUsageData = defaults.tokenUsageData;
+    customCounters = defaults.customCounters;
+    agentConnectors = defaults.agentConnectors;
+    modelContextOverrides = defaults.modelContextOverrides;
+    
+    // Explicitly reset ALL settings that might leak
+    syncSettings = defaults.syncSettings;
+    genSettings = defaults.genSettings;
+    voiceSettings = defaults.voiceSettings;
+    language = defaults.language;
+    theme = defaults.theme;
+    visualTheme = defaults.visualTheme;
+    selectedModel = defaults.selectedModel;
+    selectedTargetId = defaults.selectedTargetId;
+    isThinkingMode = defaults.isThinkingMode;
+    isArtifactMode = defaults.isArtifactMode;
+    soundEffectsEnabled = defaults.soundEffectsEnabled;
+    isLiveVideoEnabled = defaults.isLiveVideoEnabled;
+    isLiveFrontCamera = defaults.isLiveFrontCamera;
+    modelInputCosts = defaults.modelInputCosts;
+    modelOutputCosts = defaults.modelOutputCosts;
+    modelCacheHitCosts = defaults.modelCacheHitCosts;
+    
+    // Crucially clear cache and timestamps
+    cachedPasswordHash = null;
+    lastSyncAt = null;
     
     notifyListeners();
     await _storage.clearAuth();
