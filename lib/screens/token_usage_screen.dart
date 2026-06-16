@@ -734,13 +734,16 @@ class _Dropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final unique = values.toSet().toList();
+    final effectiveValue = unique.contains(value) ? value : unique.first;
+    final p = AppPalette.fromBrightness(Theme.of(context).brightness == Brightness.dark);
     return SizedBox(
       width: 170,
-      child: DropdownButtonFormField<String>(
-        initialValue: unique.contains(value) ? value : unique.first,
-        items: unique
+      child: PopupMenuButton<String>(
+        initialValue: effectiveValue,
+        onSelected: (value) => onChanged(value),
+        itemBuilder: (context) => unique
             .map(
-              (item) => DropdownMenuItem(
+              (item) => PopupMenuItem<String>(
                 value: item,
                 child: Text(
                   labels[item] ?? item,
@@ -749,9 +752,26 @@ class _Dropdown extends StatelessWidget {
               ),
             )
             .toList(),
-        onChanged: (value) {
-          if (value != null) onChanged(value);
-        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: p.outline),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  labels[effectiveValue] ?? effectiveValue,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Icon(LucideIcons.chevronDown, size: 16, color: p.onSurfaceVariant),
+            ],
+          ),
+        ),
       ),
     );
   }

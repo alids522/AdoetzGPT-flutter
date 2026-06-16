@@ -630,7 +630,6 @@ class AdoetzAppState extends ChangeNotifier {
       targetName: message.targetName,
       connectorId: message.connectorId,
       modelOrAgentId: message.modelOrAgentId,
-      toolEventIds: message.toolEventIds,
       isEstimatedTokenCount: message.isEstimatedTokenCount,
       generationTimeMs: message.generationTimeMs,
     );
@@ -2369,6 +2368,11 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void updateSyncSettings(SyncSettings value) {
+    // Reset lastSyncAt whenever database settings change. 
+    // This forces a full "Delta-bypass" sync so that if a user switches to Supabase 
+    // or adds a new backup database, ALL historical sessions are pushed!
+    lastSyncAt = null;
+
     syncSettings = value;
     notifyListeners();
     if (!value.enabled || !value.useSupabase) {
@@ -2484,12 +2488,21 @@ class AdoetzAppState extends ChangeNotifier {
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
       syncStatus = 'Successfully synced to database.';
     } catch (error) {
+      if (_isTokenExpiredError(error)) {
+        unawaited(signOut());
+        return;
+      }
       _dirtySessionIds.addAll(changedSessionIds);
       _dirtySettings = _dirtySettings || pushSettings;
       syncStatus = error.toString().replaceFirst('Exception: ', '');
     }
     notifyListeners();
     await _persist(touchSavedAt: false);
+  }
+
+  bool _isTokenExpiredError(dynamic error) {
+    final str = error.toString();
+    return str.contains('PGRST303') || str.contains('JWT expired');
   }
 
   void _replaceSession(String id, Session next) {
@@ -2565,7 +2578,6 @@ class AdoetzAppState extends ChangeNotifier {
     int? tokenCount,
     bool? isEstimatedTokenCount,
     int? generationTimeMs,
-    List<String>? toolEventIds,
   }) {
     final session = sessions.where((item) => item.id == sessionId).firstOrNull;
     if (session == null) return;
@@ -2580,7 +2592,6 @@ class AdoetzAppState extends ChangeNotifier {
               tokenCount: tokenCount,
               isEstimatedTokenCount: isEstimatedTokenCount,
               generationTimeMs: generationTimeMs,
-              toolEventIds: toolEventIds,
             );
           },
         )
@@ -2600,7 +2611,6 @@ class AdoetzAppState extends ChangeNotifier {
           targetName: target.displayName,
           connectorId: target.connectorId,
           modelOrAgentId: target.modelId,
-          toolEventIds: toolEventIds ?? const [],
           isEstimatedTokenCount: isEstimatedTokenCount ?? true,
           generationTimeMs: generationTimeMs,
         ),
@@ -3079,7 +3089,8 @@ class AdoetzAppState extends ChangeNotifier {
           settingsChanged: localSettingsChanged,
         );
       }
-    } catch (_) {
+    } catch (error) {
+      if (_isTokenExpiredError(error)) unawaited(signOut());
       // Realtime remains primary; polling failures should not interrupt chat.
     } finally {
       _remotePullInFlight = false;
@@ -3258,6 +3269,10 @@ class AdoetzAppState extends ChangeNotifier {
         notifyListeners();
         await _persist(touchSavedAt: false);
       } catch (error) {
+        if (_isTokenExpiredError(error)) {
+          unawaited(signOut());
+          return;
+        }
         _dirtySessionIds.addAll(changedSessionIds);
         _dirtySettings = _dirtySettings || pushSettings;
         syncStatus = error.toString().replaceFirst('Exception: ', '');

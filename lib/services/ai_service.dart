@@ -1312,6 +1312,16 @@ $chatHistory
       'weather',
       'happening',
       '2026',
+      'search web',
+      'search the web',
+      'search on web',
+      'search internet',
+      'search the internet',
+      'google this',
+      'find out',
+      'what is the latest',
+      'who won',
+      'what is the weather',
       // Indonesian triggers
       'terbaru',
       'terkini',
@@ -1338,41 +1348,46 @@ $chatHistory
     final engine = settings.webSearchEngine;
     onStatus('Searching the web...');
     if (engine == 'duckduckgo') {
-      final uri = Uri.https('api.duckduckgo.com', '/', {
-        'q': query,
-        'format': 'json',
-        'no_html': '1',
-        'skip_disambig': '1',
-      });
-      final data = await _getJson(uri);
-      final topics = data['RelatedTopics'] is List
-          ? data['RelatedTopics'] as List
-          : const [];
+      final response = await http.post(
+        Uri.parse('https://lite.duckduckgo.com/lite/'),
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+        body: 'q=${Uri.encodeQueryComponent(query)}',
+      );
+
+      final html = response.body;
       final results = <Map<String, String>>[];
-      if (stringValue(data['AbstractText']).isNotEmpty) {
-        results.add({
-          'title': stringValue(data['Heading'], 'DuckDuckGo abstract'),
-          'url': stringValue(data['AbstractURL']),
-          'snippet': stringValue(data['AbstractText']),
-        });
-      }
-      for (final topic in topics) {
-        if (topic is Map && topic['Topics'] is List) {
-          for (final nested in (topic['Topics'] as List).whereType<Map>()) {
-            results.add({
-              'title': stringValue(nested['Text']).split(' - ').first,
-              'url': stringValue(nested['FirstURL']),
-              'snippet': stringValue(nested['Text']),
-            });
-          }
-        } else if (topic is Map) {
+      
+      final linkRegex = RegExp(r"<a[^>]+href=\x22([^\x22]+)\x22[^>]*class='result-link'[^>]*>(.*?)</a>");
+      final snippetRegex = RegExp(r"<td class='result-snippet'>\s*(.*?)\s*</td>", dotAll: true);
+      
+      final linkMatches = linkRegex.allMatches(html).toList();
+      final snippetMatches = snippetRegex.allMatches(html).toList();
+
+      for (int i = 0; i < linkMatches.length; i++) {
+        var url = linkMatches[i].group(1) ?? '';
+        if (url.startsWith('//')) {
+          url = 'https:$url';
+        } else if (url.startsWith('/')) {
+          url = 'https://lite.duckduckgo.com$url';
+        }
+        var title = linkMatches[i].group(2) ?? '';
+        title = title.replaceAll(RegExp(r'<[^>]*>'), '').replaceAll('&#x27;', "'").replaceAll('&quot;', '"').replaceAll('&amp;', '&');
+        
+        var snippet = i < snippetMatches.length ? snippetMatches[i].group(1) ?? '' : '';
+        snippet = snippet.replaceAll(RegExp(r'<[^>]*>'), '').replaceAll('&#x27;', "'").replaceAll('&quot;', '"').replaceAll('&amp;', '&');
+        
+        if (url.isNotEmpty && title.isNotEmpty && !url.contains('duckduckgo.com/lite/')) {
           results.add({
-            'title': stringValue(topic['Text']).split(' - ').first,
-            'url': stringValue(topic['FirstURL']),
-            'snippet': stringValue(topic['Text']),
+            'title': title.trim(),
+            'url': url,
+            'snippet': snippet.trim(),
           });
         }
       }
+
       if (results.isEmpty) {
         throw Exception('DuckDuckGo returned no web results.');
       }

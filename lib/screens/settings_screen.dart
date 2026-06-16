@@ -135,8 +135,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
               if (_selectedCategory == 'Voice & Live') ...[
                 _VoiceSection(copy: copy),
-                const SizedBox(height: 22),
-                const _MediaSection(),
               ],
               if (_selectedCategory == 'Sync & Data') ...[
                 _SyncSection(
@@ -2248,39 +2246,6 @@ class _WebSearchSection extends StatelessWidget {
   }
 }
 
-class _MediaSection extends StatelessWidget {
-  const _MediaSection();
-
-  @override
-  Widget build(BuildContext context) {
-    final app = context.watch<AdoetzAppState>();
-    return GlassPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SectionHeader(
-            icon: LucideIcons.sparkles,
-            title: 'Media Generation',
-            accent: Colors.purpleAccent,
-          ),
-          const SizedBox(height: 18),
-          Text('IMAGE MODEL', style: _labelStyle(context)),
-          const SizedBox(height: 8),
-          SegmentedPills<String>(
-            value: app.genSettings.imageModel,
-            items: const [
-              SegmentItem(value: 'gemini', label: 'Gemini'),
-              SegmentItem(value: 'openai', label: 'OpenAI'),
-            ],
-            onChanged: (value) => app.updateGenerationSettings(
-              app.genSettings.copyWith(imageModel: value),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _ActionBar extends StatelessWidget {
   const _ActionBar({required this.copy});
@@ -2443,26 +2408,129 @@ class _DropdownSetting extends StatelessWidget {
     final effectiveValue = items.contains(value)
         ? value
         : (items.isNotEmpty ? items.first : '');
+    final p = AppPalette.fromBrightness(Theme.of(context).brightness == Brightness.dark);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label.toUpperCase(), style: _labelStyle(context)),
         const SizedBox(height: 7),
-        DropdownButtonFormField<String>(
-          initialValue: effectiveValue,
-          items: items
-              .map(
-                (item) => DropdownMenuItem(
-                  value: item,
-                  child: Text(labels[item] ?? item),
-                ),
-              )
-              .toList(),
-          onChanged: (value) {
-            if (value != null) onChanged(value);
+        InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () async {
+            final result = await showDialog<String>(
+              context: context,
+              builder: (context) => _SearchableListDialog(
+                initialValue: effectiveValue,
+                values: items,
+                labels: labels,
+              ),
+            );
+            if (result != null) onChanged(result);
           },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: p.outline),
+              color: p.surface,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    labels[effectiveValue] ?? effectiveValue,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Icon(LucideIcons.chevronDown, size: 16, color: p.onSurfaceVariant),
+              ],
+            ),
+          ),
         ),
       ],
+    );
+  }
+}
+
+class _SearchableListDialog extends StatefulWidget {
+  const _SearchableListDialog({
+    required this.initialValue,
+    required this.values,
+    required this.labels,
+  });
+
+  final String initialValue;
+  final List<String> values;
+  final Map<String, String> labels;
+
+  @override
+  State<_SearchableListDialog> createState() => _SearchableListDialogState();
+}
+
+class _SearchableListDialogState extends State<_SearchableListDialog> {
+  String query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final p = AppPalette.fromBrightness(Theme.of(context).brightness == Brightness.dark);
+    final filtered = widget.values.where((v) {
+      final label = (widget.labels[v] ?? v).toLowerCase();
+      return label.contains(query.toLowerCase());
+    }).toList();
+
+    return Dialog(
+      backgroundColor: p.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        width: 400,
+        constraints: const BoxConstraints(maxHeight: 500),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: TextField(
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'Search...',
+                  prefixIcon: Icon(LucideIcons.search, size: 16, color: p.onSurfaceVariant),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  filled: true,
+                  fillColor: p.onSurface.withValues(alpha: 0.05),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                onChanged: (val) => setState(() => query = val),
+              ),
+            ),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: filtered.length,
+                itemBuilder: (context, index) {
+                  final item = filtered[index];
+                  final isSelected = item == widget.initialValue;
+                  return ListTile(
+                    title: Text(
+                      widget.labels[item] ?? item,
+                      style: TextStyle(
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                        color: isSelected ? p.primary : p.onSurface,
+                      ),
+                    ),
+                    trailing: isSelected ? Icon(LucideIcons.check, color: p.primary, size: 16) : null,
+                    onTap: () => Navigator.of(context).pop(item),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

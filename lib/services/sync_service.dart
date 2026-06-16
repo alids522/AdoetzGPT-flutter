@@ -170,7 +170,7 @@ class SyncService {
       if (!token.startsWith('direct:')) {
         throw Exception('Your current session is from Supabase. Please log out and sign in to Postgres to sync.');
       }
-      return _directPullState(token, settings.database);
+      return _directPullState(token, settings);
     }
 
     final response = await _postJson(
@@ -309,6 +309,7 @@ class SyncService {
     if (!settingsChanged && changedIds != null && changedIds.isEmpty) return;
     
     bool pushSuccess = false;
+    final errors = <String>[];
 
     if (settings.useSupabase) {
       if (token.startsWith('direct:')) {
@@ -318,78 +319,88 @@ class SyncService {
       final userId = state.currentUser?.id;
       if (userId == null) return;
       
-      if (settingsChanged) {
-        final settingsJson = _remoteStateJson(state);
-        settingsJson.remove('sessions');
-        await client.from('user_settings').upsert({
-          'user_id': userId,
-          'state': settingsJson,
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
-        });
+      try {
+        if (settingsChanged) {
+          final settingsJson = _remoteStateJson(state);
+          settingsJson.remove('sessions');
+          await client.from('user_settings').upsert({
+            'user_id': userId,
+            'state': settingsJson,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          });
+        }
+        
+        final sessionsToPush = _sessionsForDelta(
+          state,
+          lastSyncAt: lastSyncAt,
+          changedSessionIds: changedIds,
+        );
+            
+        for (final s in sessionsToPush) {
+          await client.from('chat_sessions').upsert({
+            'id': s.id,
+            'user_id': userId,
+            'session': s.toJson(),
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          });
+        }
+        pushSuccess = true;
+      } catch (e) {
+        errors.add('Supabase Primary Error: $e');
       }
-      
-      final sessionsToPush = _sessionsForDelta(
-        state,
-        lastSyncAt: lastSyncAt,
-        changedSessionIds: changedIds,
-      );
-          
-      for (final s in sessionsToPush) {
-        await client.from('chat_sessions').upsert({
-          'id': s.id,
-          'user_id': userId,
-          'session': s.toJson(),
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
-        });
-      }
-      pushSuccess = true;
     } else if (shouldUseDirectPostgres(settings)) {
       if (!token.startsWith('direct:')) {
         throw Exception('Your current session is from Supabase. Please log out and sign in to Postgres to sync.');
       }
-      await _directPushState(
-        token,
-        state,
-        settings.database,
-        lastSyncAt: lastSyncAt,
-        changedSessionIds: changedIds,
-        settingsChanged: settingsChanged,
-      );
-      pushSuccess = true;
-    } else {
-      final sessionsToPush = _sessionsForDelta(
-        state,
-        lastSyncAt: lastSyncAt,
-        changedSessionIds: changedIds,
-      );
-      final response = await _postJson(
-        settings,
-        '/api/sync/push',
-        {
-          'settings': (() { 
-            final s = _remoteStateJson(state); 
-            s.remove('sessions'); 
-            return s; 
-          })(),
-          'sessions': sessionsToPush
-              .map((s) => {'id': s.id, 'session': s.toJson()})
-              .toList(),
-          'dbConfig': _databasePayload(settings.database),
-        },
-        headers: {'Authorization': 'Bearer $token'},
-      );
-      final data = _readJson(response);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception(data['error'] ?? 'Unable to push remote state.');
+      try {
+        await _directPushState(
+          token,
+          state,
+          settings.database,
+          lastSyncAt: lastSyncAt,
+          changedSessionIds: changedIds,
+          settingsChanged: settingsChanged,
+        );
+        pushSuccess = true;
+      } catch (e) {
+        errors.add('Postgres Primary Error: $e');
       }
-      pushSuccess = true;
+    } else {
+      try {
+        final sessionsToPush = _sessionsForDelta(
+          state,
+          lastSyncAt: lastSyncAt,
+          changedSessionIds: changedIds,
+        );
+        final response = await _postJson(
+          settings,
+          '/api/sync/push',
+          {
+            'settings': (() { 
+              final s = _remoteStateJson(state); 
+              s.remove('sessions'); 
+              return s; 
+            })(),
+            'sessions': sessionsToPush
+                .map((s) => {'id': s.id, 'session': s.toJson()})
+                .toList(),
+            'dbConfig': _databasePayload(settings.database),
+          },
+          headers: {'Authorization': 'Bearer $token'},
+        );
+        final data = _readJson(response);
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw Exception(data['error'] ?? 'Unable to push remote state.');
+        }
+        pushSuccess = true;
+      } catch (e) {
+        errors.add('API Primary Error: $e');
+      }
     }
 
-    if (pushSuccess && settings.autoSyncBackups) {
+    if (settings.autoSyncBackups) {
       for (final db in settings.backupDatabases) {
-        if (db.databaseUrl.trim().isEmpty || db.database.trim().isEmpty) {
-          throw Exception('Backup database is missing URL or Database Name.');
-        }
+        if (db.databaseUrl.trim().isEmpty || db.database.trim().isEmpty) continue;
         try {
           if (settings.useSupabase) {
             await _directPushStateWithClonedUser(
@@ -406,36 +417,60 @@ class SyncService {
               settingsChanged: settingsChanged,
             );
           } else if (shouldUseDirectPostgres(settings)) {
-            final primaryConn = await _open(settings.database);
+            String? userId;
+            String? username;
+            String? passwordHash;
+
             try {
-              final userRow = await primaryConn.execute(
-                pg.Sql('SELECT id, username, password_hash FROM ${_quote(_schema(settings.database))}.users WHERE id = \$1'),
-                parameters: [state.currentUser?.id],
-              ).then((r) => r.firstOrNull);
-              
-              if (userRow == null) {
-                throw Exception('Primary user account not found in database. Cannot clone to backup.');
+              final primaryConn = await _open(settings.database);
+              try {
+                final userRow = await primaryConn.execute(
+                  pg.Sql('SELECT id, username, password_hash FROM ${_quote(_schema(settings.database))}.users WHERE id = \$1'),
+                  parameters: [state.currentUser?.id],
+                ).then((r) => r.firstOrNull);
+                
+                if (userRow != null) {
+                  userId = userRow[0] as String;
+                  username = userRow[1] as String;
+                  passwordHash = userRow[2] as String;
+                }
+              } finally {
+                await primaryConn.close();
               }
-              
-              await _directPushStateWithClonedUser(
-                token: token,
-                state: state,
-                backupDb: db,
-                clonedUserId: userRow[0] as String,
-                clonedUsername: userRow[1] as String,
-                clonedPasswordHash: userRow[2] as String,
-                lastSyncAt: lastSyncAt,
-                changedSessionIds: changedIds,
-                settingsChanged: settingsChanged,
-              );
-            } finally {
-              await primaryConn.close();
+            } catch (_) {
+              // Primary is down, fallback to local cache
+              userId = state.currentUser?.id;
+              username = state.currentUser?.username;
+              passwordHash = state.cachedPasswordHash;
             }
+
+            if (userId == null || username == null) {
+              throw Exception('Cannot clone to backup: user account not found in primary DB or local cache.');
+            }
+            
+            await _directPushStateWithClonedUser(
+              token: token,
+              state: state,
+              backupDb: db,
+              clonedUserId: userId,
+              clonedUsername: username,
+              clonedPasswordHash: passwordHash != null && passwordHash.isNotEmpty
+                  ? passwordHash
+                  : r'$2a$10$XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+              lastSyncAt: lastSyncAt,
+              changedSessionIds: changedIds,
+              settingsChanged: settingsChanged,
+            );
           }
+          pushSuccess = true;
         } catch (e) {
-          throw Exception('Backup Database Error (${db.databaseUrl}): $e');
+          errors.add('Backup Error (${db.databaseUrl}): $e');
         }
       }
+    }
+
+    if (!pushSuccess && errors.isNotEmpty) {
+      throw Exception('Failed to push to all databases:\n${errors.join('\n')}');
     }
   }
 
@@ -654,7 +689,7 @@ class SyncService {
         throw Exception('Invalid username or password.');
       }
       final user = _publicUser(row);
-      final remote = await _directPullState(_directToken(user.id), db);
+      final remote = await _directPullState(_directToken(user.id), SyncSettings(database: db));
       return AuthResult(
         user: user,
         token: _directToken(user.id),
@@ -667,38 +702,55 @@ class SyncService {
 
   Future<PersistedAppState?> _directPullState(
     String token,
-    DatabaseSettings db,
+    SyncSettings settings,
   ) async {
     final userId = _directUserId(token);
     if (userId.isEmpty) throw Exception('Invalid direct Postgres auth token.');
-    final conn = await _open(db);
-    try {
-      final schema = _schema(db);
-      await _ensurePostgres(conn, schema);
-      final settingsResult = await conn.execute(
-        pg.Sql('SELECT state FROM ${_quote(schema)}.user_settings WHERE user_id = \$1'),
-        parameters: [userId],
-      );
-      final sessionsResult = await conn.execute(
-        pg.Sql('SELECT id, session FROM ${_quote(schema)}.chat_sessions WHERE user_id = \$1'),
-        parameters: [userId],
-      );
-      
-      final combined = <String, dynamic>{};
-      if (settingsResult.isNotEmpty && settingsResult.first[0] != null) {
-        final settingsState = _jsonMapFromValue(settingsResult.first[0]);
-        if (settingsState != null) combined.addAll(settingsState);
+    
+    final databases = [settings.database, ...settings.backupDatabases];
+    final errors = <String>[];
+
+    for (final db in databases) {
+      if (db.databaseUrl.trim().isEmpty) continue;
+      try {
+        final conn = await _open(db);
+        try {
+          final schema = _schema(db);
+          await _ensurePostgres(conn, schema);
+          final settingsResult = await conn.execute(
+            pg.Sql('SELECT state FROM ${_quote(schema)}.user_settings WHERE user_id = \$1'),
+            parameters: [userId],
+          );
+          final sessionsResult = await conn.execute(
+            pg.Sql('SELECT id, session FROM ${_quote(schema)}.chat_sessions WHERE user_id = \$1'),
+            parameters: [userId],
+          );
+          
+          final combined = <String, dynamic>{};
+          if (settingsResult.isNotEmpty && settingsResult.first[0] != null) {
+            final settingsState = _jsonMapFromValue(settingsResult.first[0]);
+            if (settingsState != null) combined.addAll(settingsState);
+          }
+          if (sessionsResult.isNotEmpty) {
+            combined['sessions'] = sessionsResult
+                .map((row) => _jsonMapFromValue(row[1]))
+                .whereType<Map<String, dynamic>>()
+                .toList();
+          }
+          return combined.isNotEmpty ? PersistedAppState.fromJson(combined) : null;
+        } finally {
+          await conn.close();
+        }
+      } catch (e) {
+        errors.add('Failed to pull from ${db.databaseUrl}: $e');
       }
-      if (sessionsResult.isNotEmpty) {
-        combined['sessions'] = sessionsResult
-            .map((row) => _jsonMapFromValue(row[1]))
-            .whereType<Map<String, dynamic>>()
-            .toList();
-      }
-      return combined.isNotEmpty ? PersistedAppState.fromJson(combined) : null;
-    } finally {
-      await conn.close();
     }
+
+    if (errors.isNotEmpty) {
+      debugPrint('Pull State Failover Errors:\n${errors.join('\n')}');
+      throw Exception('Failed to connect to all databases (Primary + Backups).');
+    }
+    return null;
   }
 
   Future<void> _directPushStateWithClonedUser({

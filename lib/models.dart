@@ -1009,8 +1009,6 @@ class TargetSwitchEvent {
 
 class GenerationSettings {
   const GenerationSettings({
-    this.imageModel = 'gemini',
-    this.videoModel = 'veo',
     this.memoryEnabled = true,
     this.webSearchMode = 'auto',
     this.webSearchEngine = 'gemini',
@@ -1021,12 +1019,17 @@ class GenerationSettings {
     this.googleSearchCx = '',
     this.tavilyApiKey = '',
     this.hapticStreamingEnabled = false,
-    this.titleModelEnabled = false,
+    this.titleModelEnabled = true,
     this.titleModel = '',
+    this.voiceModel = 'gemini-2.0-flash-exp',
+    this.liveModeEnabled = true,
+    this.temperature = 0.7,
+    this.topP = 0.9,
+    this.topK = 40,
+    this.maxOutputTokens = 8192,
+    this.contextLimit = 128000,
   });
 
-  final String imageModel;
-  final String videoModel;
   final bool memoryEnabled;
   final String webSearchMode;
   final String webSearchEngine;
@@ -1039,10 +1042,15 @@ class GenerationSettings {
   final bool hapticStreamingEnabled;
   final bool titleModelEnabled;
   final String titleModel;
+  final String voiceModel;
+  final bool liveModeEnabled;
+  final double temperature;
+  final double topP;
+  final int topK;
+  final int maxOutputTokens;
+  final int contextLimit;
 
   GenerationSettings copyWith({
-    String? imageModel,
-    String? videoModel,
     bool? memoryEnabled,
     String? webSearchMode,
     String? webSearchEngine,
@@ -1055,11 +1063,16 @@ class GenerationSettings {
     bool? hapticStreamingEnabled,
     bool? titleModelEnabled,
     String? titleModel,
+    String? voiceModel,
+    bool? liveModeEnabled,
+    double? temperature,
+    double? topP,
+    int? topK,
+    int? maxOutputTokens,
+    int? contextLimit,
   }) {
     final nextEngine = webSearchEngine ?? this.webSearchEngine;
     return GenerationSettings(
-      imageModel: imageModel ?? this.imageModel,
-      videoModel: videoModel ?? this.videoModel,
       memoryEnabled: memoryEnabled ?? this.memoryEnabled,
       webSearchMode: webSearchMode ?? this.webSearchMode,
       webSearchEngine: nextEngine,
@@ -1075,6 +1088,13 @@ class GenerationSettings {
           hapticStreamingEnabled ?? this.hapticStreamingEnabled,
       titleModelEnabled: titleModelEnabled ?? this.titleModelEnabled,
       titleModel: titleModel ?? this.titleModel,
+      voiceModel: voiceModel ?? this.voiceModel,
+      liveModeEnabled: liveModeEnabled ?? this.liveModeEnabled,
+      temperature: temperature ?? this.temperature,
+      topP: topP ?? this.topP,
+      topK: topK ?? this.topK,
+      maxOutputTokens: maxOutputTokens ?? this.maxOutputTokens,
+      contextLimit: contextLimit ?? this.contextLimit,
     );
   }
 
@@ -1085,8 +1105,6 @@ class GenerationSettings {
       json['webSearchProvider'] == 'endpoint' ? 'endpoint' : 'gemini',
     );
     return GenerationSettings(
-      imageModel: stringValue(json['imageModel'], 'gemini'),
-      videoModel: stringValue(json['videoModel'], 'veo'),
       memoryEnabled: json.containsKey('memoryEnabled')
           ? boolValue(json['memoryEnabled'])
           : true,
@@ -1102,14 +1120,19 @@ class GenerationSettings {
       googleSearchCx: stringValue(json['googleSearchCx']),
       tavilyApiKey: stringValue(json['tavilyApiKey']),
       hapticStreamingEnabled: boolValue(json['hapticStreamingEnabled']),
-      titleModelEnabled: boolValue(json['titleModelEnabled']),
+      titleModelEnabled: json['titleModelEnabled'] ?? true,
       titleModel: stringValue(json['titleModel']),
+      voiceModel: stringValue(json['voiceModel'], 'gemini-2.0-flash-exp'),
+      liveModeEnabled: json['liveModeEnabled'] ?? true,
+      temperature: doubleValue(json['temperature'], 0.7),
+      topP: doubleValue(json['topP'], 0.9),
+      topK: intValue(json['topK'], 40),
+      maxOutputTokens: intValue(json['maxOutputTokens'], 8192),
+      contextLimit: intValue(json['contextLimit'], 128000),
     );
   }
 
   Map<String, dynamic> toJson() => {
-    'imageModel': imageModel,
-    'videoModel': videoModel,
     'memoryEnabled': memoryEnabled,
     'webSearchMode': webSearchMode,
     'webSearchEngine': webSearchEngine,
@@ -1122,6 +1145,13 @@ class GenerationSettings {
     'hapticStreamingEnabled': hapticStreamingEnabled,
     'titleModelEnabled': titleModelEnabled,
     'titleModel': titleModel,
+    'voiceModel': voiceModel,
+    'liveModeEnabled': liveModeEnabled,
+    'temperature': temperature,
+    'topP': topP,
+    'topK': topK,
+    'maxOutputTokens': maxOutputTokens,
+    'contextLimit': contextLimit,
   };
 }
 
