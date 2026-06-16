@@ -272,9 +272,11 @@ class MemoryAgent {
         r"\bi\s+am\s+building\s+(?:an?\s+)?(.{3,90})",
         caseSensitive: false,
       ).firstMatch(clean)!.group(1)!;
+      final projKeyWords = _normalize(project).split(' ').where((w) => w.isNotEmpty).take(3).join('_');
+      final projKey = projKeyWords.isEmpty ? 'current_project' : 'project_$projKeyWords';
       actions.add(
         _upsert(
-          key: 'current_project',
+          key: projKey,
           type: 'project_memory',
           value: 'User is building ${_trimClause(project)}.',
           scope: 'project',
@@ -428,7 +430,9 @@ class MemoryAgent {
       return 'preferred_framework';
     }
     if (normalized.contains('project') || normalized.contains('app')) {
-      return 'project_requirement';
+      // It is safer to let the user delete specific projects via the UI 
+      // rather than blindly deleting all project requirements.
+      return 'none';
     }
     return 'none';
   }
@@ -549,6 +553,16 @@ class MemoryAgent {
       'fixing',
       'creating',
       'making',
+      'interested',
+      'glad',
+      'happy',
+      'sad',
+      'sorry',
+      'sure',
+      'just',
+      'really',
+      'currently',
+      'feeling',
     }.contains(first);
   }
 
@@ -606,7 +620,7 @@ class MemoryAgent {
     final words = _normalize(
       value,
     ).split(' ').where((word) => word.length > 2).take(4).join('_');
-    return words.isEmpty ? 'custom_memory' : words;
+    return words.isEmpty ? 'custom_memory_${DateTime.now().millisecondsSinceEpoch}' : words;
   }
 
   String _memorySentence(String content) {

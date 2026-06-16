@@ -1327,10 +1327,13 @@ class _MemoryPanel extends StatefulWidget {
 class _MemoryPanelState extends State<_MemoryPanel> {
   String? editingId;
   final controller = TextEditingController();
+  final addController = TextEditingController();
+  bool isAdding = false;
 
   @override
   void dispose() {
     controller.dispose();
+    addController.dispose();
     super.dispose();
   }
 
@@ -1347,127 +1350,193 @@ class _MemoryPanelState extends State<_MemoryPanel> {
         color: p.onSurface.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(18),
       ),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 180),
-        child: app.memories.isEmpty
-            ? Padding(
-                padding: const EdgeInsets.all(12),
-                child: Center(
-                  child: Text(
-                    widget.copy.t('sidebar', 'noMemories'),
-                    style: TextStyle(
-                      color: p.onSurfaceVariant,
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (isAdding)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Column(
+                children: [
+                  TextField(
+                    controller: addController,
+                    minLines: 2,
+                    maxLines: 4,
+                    decoration: InputDecoration(
+                      hintText: 'New memory...',
+                      hintStyle: TextStyle(
+                        fontSize: 12,
+                        color: p.onSurfaceVariant.withValues(alpha: 0.5),
+                      ),
+                      isDense: true,
                     ),
+                    style: const TextStyle(fontSize: 12),
                   ),
-                ),
-              )
-            : ListView.builder(
-                shrinkWrap: true,
-                itemCount: app.memories.length,
-                itemBuilder: (context, index) {
-                  final memory = app.memories[index];
-                  final editing = editingId == memory.id;
-                  if (editing) {
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Column(
-                        children: [
-                          TextField(
-                            controller: controller,
-                            minLines: 2,
-                            maxLines: 4,
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                          Row(
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () {
+                            app.addMemory(addController.text);
+                            addController.clear();
+                            setState(() => isAdding = false);
+                          },
+                          child: Text(widget.copy.t('sidebar', 'save')),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            addController.clear();
+                            setState(() => isAdding = false);
+                          },
+                          child: Text(widget.copy.t('sidebar', 'cancel')),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 180),
+            child: app.activeMemories.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Center(
+                      child: Text(
+                        widget.copy.t('sidebar', 'noMemories'),
+                        style: TextStyle(
+                          color: p.onSurfaceVariant,
+                          fontSize: 12,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: app.activeMemories.length,
+                    itemBuilder: (context, index) {
+                      final memory = app.activeMemories[index];
+                      final editing = editingId == memory.id;
+                      if (editing) {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Column(
                             children: [
-                              Expanded(
-                                child: FilledButton(
-                                  onPressed: () {
-                                    app.updateMemory(
-                                      memory.id,
-                                      controller.text,
-                                    );
-                                    setState(() => editingId = null);
-                                  },
-                                  child: Text(widget.copy.t('sidebar', 'save')),
-                                ),
+                              TextField(
+                                controller: controller,
+                                minLines: 2,
+                                maxLines: 4,
+                                style: const TextStyle(fontSize: 12),
                               ),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed: () =>
-                                      setState(() => editingId = null),
-                                  child: Text(
-                                    widget.copy.t('sidebar', 'cancel'),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: FilledButton(
+                                      onPressed: () {
+                                        app.updateMemory(
+                                          memory.id,
+                                          controller.text,
+                                        );
+                                        setState(() => editingId = null);
+                                      },
+                                      child: Text(widget.copy.t('sidebar', 'save')),
+                                    ),
                                   ),
-                                ),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: OutlinedButton(
+                                      onPressed: () =>
+                                          setState(() => editingId = null),
+                                      child: Text(
+                                        widget.copy.t('sidebar', 'cancel'),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
-                        ],
-                      ),
-                    );
-                  }
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: p.onSurface.withValues(alpha: 0.04),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          memory.content,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: p.onSurface.withValues(alpha: 0.78),
-                          ),
+                        );
+                      }
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: p.onSurface.withValues(alpha: 0.04),
+                          borderRadius: BorderRadius.circular(14),
                         ),
-                        Row(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              DateFormat.yMd().format(
-                                DateTime.fromMillisecondsSinceEpoch(
-                                  memory.timestamp,
-                                ),
-                              ),
+                              memory.content,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                fontSize: 10,
-                                color: p.onSurfaceVariant.withValues(
-                                  alpha: 0.6,
-                                ),
+                                fontSize: 12,
+                                color: p.onSurface.withValues(alpha: 0.78),
                               ),
                             ),
-                            const Spacer(),
-                            RoundIconButton(
-                              icon: LucideIcons.edit2,
-                              size: 26,
-                              iconSize: 12,
-                              onPressed: () {
-                                controller.text = memory.content;
-                                setState(() => editingId = memory.id);
-                              },
-                            ),
-                            RoundIconButton(
-                              icon: LucideIcons.trash2,
-                              size: 26,
-                              iconSize: 12,
-                              color: p.error,
-                              onPressed: () => app.deleteMemory(memory.id),
+                            Row(
+                              children: [
+                                Text(
+                                  DateFormat.yMd().format(
+                                    DateTime.fromMillisecondsSinceEpoch(
+                                      memory.timestamp,
+                                    ),
+                                  ),
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: p.onSurfaceVariant.withValues(
+                                      alpha: 0.6,
+                                    ),
+                                  ),
+                                ),
+                                const Spacer(),
+                                RoundIconButton(
+                                  icon: LucideIcons.edit2,
+                                  size: 26,
+                                  iconSize: 12,
+                                  onPressed: () {
+                                    controller.text = memory.content;
+                                    setState(() => editingId = memory.id);
+                                  },
+                                ),
+                                RoundIconButton(
+                                  icon: LucideIcons.trash2,
+                                  size: 26,
+                                  iconSize: 12,
+                                  color: p.error,
+                                  onPressed: () => app.deleteMemory(memory.id),
+                                ),
+                              ],
                             ),
                           ],
                         ),
-                      ],
-                    ),
-                  );
-                },
+                      );
+                    },
+                  ),
+          ),
+          if (!isAdding)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: TextButton.icon(
+                onPressed: () => setState(() => isAdding = true),
+                icon: const Icon(LucideIcons.plus, size: 14),
+                label: const Text('Add memory'),
+                style: TextButton.styleFrom(
+                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                ),
               ),
+            ),
+        ],
       ),
     );
   }

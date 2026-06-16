@@ -1274,6 +1274,8 @@ class Memory {
     required this.id,
     required this.content,
     required this.timestamp,
+    this.updatedAt,
+    this.deletedAt,
     this.key = '',
     this.type = 'preference',
     this.scope = 'global',
@@ -1283,6 +1285,8 @@ class Memory {
   final String id;
   final String content;
   final int timestamp;
+  final int? updatedAt;
+  final int? deletedAt;
   final String key;
   final String type;
   final String scope;
@@ -1291,6 +1295,8 @@ class Memory {
   Memory copyWith({
     String? content,
     int? timestamp,
+    int? updatedAt,
+    int? deletedAt,
     String? key,
     String? type,
     String? scope,
@@ -1299,6 +1305,8 @@ class Memory {
     id: id,
     content: content ?? this.content,
     timestamp: timestamp ?? this.timestamp,
+    updatedAt: updatedAt ?? this.updatedAt,
+    deletedAt: deletedAt ?? this.deletedAt,
     key: key ?? this.key,
     type: type ?? this.type,
     scope: scope ?? this.scope,
@@ -1307,10 +1315,13 @@ class Memory {
 
   factory Memory.fromJson(Map<String, dynamic> json) {
     final content = stringValue(json['content']);
+    final timestamp = intValue(json['timestamp']);
     return Memory(
       id: stringValue(json['id']),
       content: content,
-      timestamp: intValue(json['timestamp']),
+      timestamp: timestamp,
+      updatedAt: json['updatedAt'] != null ? intValue(json['updatedAt']) : timestamp,
+      deletedAt: json['deletedAt'] != null ? intValue(json['deletedAt']) : null,
       key: stringValue(json['key'], inferKey(content)),
       type: stringValue(json['type'], 'preference'),
       scope: stringValue(json['scope'], 'global'),
@@ -1322,6 +1333,8 @@ class Memory {
     'id': id,
     'content': content,
     'timestamp': timestamp,
+    if (updatedAt != null) 'updatedAt': updatedAt,
+    if (deletedAt != null) 'deletedAt': deletedAt,
     if (key.isNotEmpty) 'key': key,
     if (type.isNotEmpty) 'type': type,
     if (scope.isNotEmpty) 'scope': scope,
@@ -1348,11 +1361,12 @@ class Memory {
     }
     if (value.contains('tone') ||
         value.contains('verbose') ||
-        value.contains('concise') ||
-        value.contains('casual')) {
+        value.contains('concise')) {
       return 'preferred_tone';
     }
-    if (value.contains('flutter') || value.contains('react')) {
+    if (value.contains('framework') ||
+        (value.contains('prefer') &&
+            (value.contains('flutter') || value.contains('react')))) {
       return 'preferred_framework';
     }
     if (value.contains('project') || value.contains('app')) {

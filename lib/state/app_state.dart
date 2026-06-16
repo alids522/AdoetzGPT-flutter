@@ -100,6 +100,7 @@ class AdoetzAppState extends ChangeNotifier {
   List<Session> sessions = [Session.empty(null, 'model:gemini-2.5-flash')];
   String currentSessionId = '';
   List<Memory> memories = const [];
+  List<Memory> get activeMemories => memories.where((m) => m.deletedAt == null).toList();
   List<TokenUsageRecord> tokenUsageData = const [];
   List<CustomCounter> customCounters = const [];
   Map<String, int> modelContextOverrides = const {};
@@ -390,14 +391,26 @@ class AdoetzAppState extends ChangeNotifier {
     final mergedSessions = sessionMap.values.toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
-    final memoryMap = <String, Memory>{
-      for (final memory in local.memories) memory.id: memory,
-    };
+    final memoryMap = <String, Memory>{};
+    for (final memory in local.memories) {
+      final mKey = memory.key.isNotEmpty ? 'semantic_${memory.key}' : 'id_${memory.id}';
+      memoryMap[mKey] = memory;
+    }
     for (final memory in remote.memories) {
-      memoryMap[memory.id] = memory;
+      final mKey = memory.key.isNotEmpty ? 'semantic_${memory.key}' : 'id_${memory.id}';
+      final existing = memoryMap[mKey];
+      if (existing == null) {
+        memoryMap[mKey] = memory;
+      } else {
+        final existingUpdated = existing.updatedAt ?? existing.timestamp;
+        final remoteUpdated = memory.updatedAt ?? memory.timestamp;
+        if (remoteUpdated >= existingUpdated) {
+          memoryMap[mKey] = memory;
+        }
+      }
     }
     final mergedMemories = memoryMap.values.toList()
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      ..sort((a, b) => (b.updatedAt ?? b.timestamp).compareTo(a.updatedAt ?? a.timestamp));
 
     final usageSeen = <String>{};
     final mergedUsage = <TokenUsageRecord>[];
@@ -1679,7 +1692,7 @@ class AdoetzAppState extends ChangeNotifier {
     memories = memories
         .map(
           (memory) =>
-              memory.id == id ? memory.copyWith(content: content) : memory,
+              memory.id == id ? memory.copyWith(content: content, updatedAt: DateTime.now().millisecondsSinceEpoch) : memory,
         )
         .toList();
     notifyListeners();
@@ -1687,7 +1700,27 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void deleteMemory(String id) {
-    memories = memories.where((memory) => memory.id != id).toList();
+    memories = memories.map((memory) => memory.id == id ? memory.copyWith(deletedAt: DateTime.now().millisecondsSinceEpoch, updatedAt: DateTime.now().millisecondsSinceEpoch) : memory).toList();
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void addMemory(String content) {
+    if (content.trim().isEmpty) return;
+    final clean = content.trim();
+    if (_isDuplicateMemory(clean)) return;
+    
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final memory = Memory(
+      id: '$now-${memories.length}',
+      content: clean,
+      timestamp: now,
+      updatedAt: now,
+      key: 'manual_memory_$now',
+      type: 'user_defined',
+      scope: 'global',
+    );
+    memories = [memory, ...memories];
     notifyListeners();
     unawaited(_persistAndScheduleRemote());
   }
@@ -1706,6 +1739,7 @@ class AdoetzAppState extends ChangeNotifier {
       id: now.toString(),
       content: clean,
       timestamp: now,
+      updatedAt: now,
       key: key.isEmpty ? Memory.inferKey(clean) : key,
       type: type,
       scope: scope,
@@ -2838,6 +2872,24 @@ class AdoetzAppState extends ChangeNotifier {
         endpointModels: endpointModels,
         geminiApiKey: geminiApiKey,
         syncSettings: syncSettings,
+        onUsage: (input, output, endpoint, modelName) {
+          tokenUsageData = [
+            ...tokenUsageData,
+            TokenUsageRecord(
+              timestamp: DateTime.now().millisecondsSinceEpoch,
+              sessionId: sessionId,
+              model: modelName,
+              endpoint: endpoint,
+              inputTokens: input,
+              outputTokens: output,
+              totalTokens: input + output,
+              cachedInputTokens: 0,
+              cacheCreationInputTokens: 0,
+              isEstimated: false,
+            ),
+          ];
+          notifyListeners();
+        },
       );
 
       final title = cleanTitle(generated);
@@ -2935,11 +2987,16 @@ class AdoetzAppState extends ChangeNotifier {
     for (final action in actions) {
       if (action.action == 'ignore') continue;
       if (action.action == 'delete') {
-        final before = next.length;
-        next = next
-            .where((memory) => !_memoryMatchesKey(memory, action.key))
-            .toList();
-        changed = changed || next.length != before;
+        var didDelete = false;
+        final now = DateTime.now().millisecondsSinceEpoch;
+        next = next.map((memory) {
+          if (_memoryMatchesKey(memory, action.key) && memory.deletedAt == null) {
+            didDelete = true;
+            return memory.copyWith(deletedAt: now, updatedAt: now);
+          }
+          return memory;
+        }).toList();
+        changed = changed || didDelete;
         continue;
       }
       if (!action.applies || action.value.trim().isEmpty) continue;
@@ -2958,6 +3015,7 @@ class AdoetzAppState extends ChangeNotifier {
             id: '$now-${next.length}',
             content: clean,
             timestamp: now,
+            updatedAt: now,
             key: action.key,
             type: action.type,
             scope: action.scope,
@@ -2977,6 +3035,7 @@ class AdoetzAppState extends ChangeNotifier {
         next[existingIndex] = existing.copyWith(
           content: clean,
           timestamp: now,
+          updatedAt: now,
           key: action.key,
           type: action.type,
           scope: action.scope,

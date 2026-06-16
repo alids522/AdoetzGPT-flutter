@@ -382,6 +382,7 @@ class AiService {
     required List<EndpointModel> endpointModels,
     required String geminiApiKey,
     required SyncSettings syncSettings,
+    void Function(int input, int output, String endpoint, String model)? onUsage,
   }) async {
     final modelName = selectedModel.trim();
     if (modelName.isEmpty) {
@@ -454,6 +455,7 @@ $chatHistory
             selectedModel: modelName,
             endpoint: endpoint,
             syncSettings: syncSettings,
+            onUsage: onUsage == null ? null : (i, o) => onUsage(i, o, endpoint.name, modelName),
           ),
           fallbackSource: fallbackMessage ?? '',
           fallbackTitle: fallbackTitle,
@@ -464,6 +466,7 @@ $chatHistory
           prompt: titlePrompt,
           selectedModel: modelName,
           geminiApiKey: geminiApiKey,
+          onUsage: onUsage == null ? null : (i, o) => onUsage(i, o, 'Gemini', modelName),
         ),
         fallbackSource: fallbackMessage ?? '',
         fallbackTitle: fallbackTitle,
@@ -489,9 +492,15 @@ $chatHistory
     int? contextLimit,
     required TextDelta onText,
   }) async {
-    final memoryText = memories.isEmpty
+    final activeMemories = memories
+        .where((m) => m.deletedAt == null && m.sensitivity != 'high')
+        .toList()
+        ..sort((a, b) => (b.updatedAt ?? b.timestamp).compareTo(a.updatedAt ?? a.timestamp));
+    final topMemories = activeMemories.take(20).toList();
+    
+    final memoryText = topMemories.isEmpty
         ? ''
-        : '\n\n=== IMPORTANT USER CONTEXT ===\n${memories.map((m) => '- ${m.content}').join('\n')}\n=== END USER CONTEXT ===\n\n';
+        : '\n\n=== IMPORTANT USER CONTEXT ===\n${topMemories.map((m) => '- ${m.content}').join('\n')}\n=== END USER CONTEXT ===\n\n';
     final thinkingInstruction = thinkingMode
         ? ' Start with concise reasoning enclosed in <think>...</think> tags before the final answer.'
         : ' Do not include hidden reasoning, chain-of-thought, reasoning_content, or <think> tags. Answer directly.';
@@ -856,6 +865,7 @@ $chatHistory
     required String selectedModel,
     required EndpointConfig endpoint,
     required SyncSettings syncSettings,
+    void Function(int input, int output)? onUsage,
   }) async {
     final request =
         http.Request(
@@ -882,6 +892,14 @@ $chatHistory
       throw Exception(_extractApiError(body, 'Title generation failed.'));
     }
     final data = jsonDecode(body);
+    final usage = data['usage'];
+    if (usage is Map && onUsage != null) {
+      final inputTokens = _usageInputTokens(usage, 0);
+      final outputTokens = _usageOutputTokens(usage, 0);
+      if (inputTokens > 0 || outputTokens > 0) {
+        onUsage(inputTokens, outputTokens);
+      }
+    }
     final choices = data['choices'];
     if (choices is List && choices.isNotEmpty) {
       final choice = choices.first;
@@ -902,6 +920,7 @@ $chatHistory
     required String prompt,
     required String selectedModel,
     required String geminiApiKey,
+    void Function(int input, int output)? onUsage,
   }) async {
     final key = geminiApiKey.trim();
     if (key.isEmpty) return '';
