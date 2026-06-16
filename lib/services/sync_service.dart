@@ -476,8 +476,8 @@ class SyncService {
       }
     }
 
-    if (!pushSuccess && errors.isNotEmpty) {
-      throw Exception('Failed to push to all databases:\n${errors.join('\n')}');
+    if (errors.isNotEmpty) {
+      throw Exception('Partial Sync Failure:\n${errors.join('\n')}');
     }
   }
 
