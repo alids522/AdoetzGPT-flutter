@@ -1,0 +1,193 @@
+﻿Advanced Integration Architecture for the OpenClaw API: Enabling Background Execution and Dynamic Command Interfaces
+Executive Overview
+The evolution of an application from a basic conversational interface to a fully autonomous, agentic operating system utilizing the OpenClaw API requires a fundamental shift in architectural integration. Standard API endpoints, such as the widely utilized OpenAI-compatible /v1/chat/completions, are strictly designed for stateless text generation1. While these endpoints are sufficient for simple chatbot applications, they inherently strip away the control-plane features necessary for deep system interaction, resulting in the inability to execute asynchronous terminal commands or manage local system processes seamlessly1.
+To achieve advanced functionalities—specifically the ability to orchestrate background terminal sessions and implement dynamic, interactive slash commands (analogous to the Telegram user interface)—integrators must migrate away from basic completion endpoints. Instead, the architecture must leverage OpenClaw's native Gateway WebSocket Protocol, the stateful OpenResponses HTTP API (/v1/responses), and the direct tool invocation endpoints (/tools/invoke)3.
+This comprehensive analysis details the methodologies required to transcend the limitations of standard chat implementations. It explores the intricate configuration of the exec and process tools for background terminal management, the complex security and approvals matrix required to authorize these executions, and the architectural patterns necessary to build a rich frontend command interface that dynamically queries the OpenClaw Gateway for available models, skills, and operative tools.
+The Architectural Paradigm: The OpenClaw Gateway Control Plane
+OpenClaw is meticulously designed as a local-first, self-hosted control plane, operating entirely distinct from managed Software-as-a-Service (SaaS) platforms3. It acts as a central gateway that manages long-running sessions, multi-agent routing, tool execution policies, and secure network exposure7. When an application integrates with OpenClaw using standard chatbot patterns—such as sending plain text to a completions endpoint—it bypasses the sophisticated tool policies and lifecycle hooks that define an agentic system1.
+In a standard chat completion model, the large language model generates a response, and the HTTP connection subsequently closes1. If the agent attempts to run a long-running shell command, a standard HTTP request will either time out or fail to capture the background process's continuous output stream. Furthermore, the standard chat endpoint consumes significant token allocations for every interaction, making direct tool triggers highly inefficient and financially burdensome for continuous operations2.
+To execute background commands and manage interactive system directives, the integrating application must communicate with OpenClaw as an operator client rather than a passive chat receiver9. This elevated integration is achieved via two primary pathways, each catering to different infrastructural requirements.
+The first pathway utilizes the OpenClaw App SDK (@openclaw/sdk). Designed explicitly for external applications such as dashboards, integrated development environment extensions, and custom chat interfaces, the App SDK establishes a persistent WebSocket connection to the Gateway4. This persistent connection allows the application to stream real-time events, manage durable sessions, and invoke tools directly without incurring the overhead of continuous polling10. The SDK exposes comprehensive control over runs, allowing the application to initiate a task via Agent.run(), stream normalized events via Run.events(), and explicitly cancel operations via Run.cancel()10.
+The second pathway relies on the OpenResponses API (POST /v1/responses). For applications that must remain on standard HTTP protocols, the OpenResponses API provides a stateful, item-based interaction model1. This API natively supports function calling via the function_call_output item, enables precise session routing through the x-openclaw-session-key header, and provides Server-Sent Events for streaming outputs1. This allows an application to maintain session continuity and handle tool execution callbacks without requiring a persistent WebSocket tunnel1.
+Integrating via these methods elevates the custom application from a simple text relay to a unified command center capable of bidirectional process management and deep system orchestration.
+Unlocking System Execution: The exec and process Toolchains
+The core requirement to execute terminal commands in the background without blocking the user interface hinges on the intricate configuration of two distinct but interrelated OpenClaw tools: the exec tool and the process tool11. It is critical to understand that disabling standard filesystem tools, such as write or edit, does not inherently restrict the exec tool from mutating the system; therefore, mastering programmatic control and security over these tools is paramount12.
+Initiating Commands via the exec Tool
+The exec tool serves as the primary mutating shell surface within the OpenClaw ecosystem. It allows the agent, or the application directly, to run shell commands within the configured workspace12. To facilitate background terminal execution without stalling the application's conversational interface, the exec tool supports specific parameters explicitly designed for asynchronous operation management.
+
+
+Parameter
+	Type
+	Operational Impact and Description
+	command
+	String
+	The required shell command to execute. This dictates the core action, such as executing a deployment script or initiating a local server12.
+	workdir
+	String
+	The working directory for the command. This defaults to the current workspace root if omitted12.
+	env
+	Object
+	Key/value environment overrides that are merged on top of the inherited environment. This allows the application to inject specific tokens or path variables required for the command12.
+	yieldMs
+	Number
+	The auto-background threshold, defaulting to ten seconds. If the command execution exceeds this delay, OpenClaw automatically backgrounds the process and returns control to the caller11.
+	background
+	Boolean
+	Immediate backgrounding toggle. When set to true, the process backgrounds instantly without waiting for the yieldMs threshold. This is critical for initiating long-running terminal tasks from a custom user interface11.
+	timeout
+	Number
+	The execution timeout in seconds. This overrides the globally configured tools.exec.timeoutSec. Setting this value to zero disables the timeout completely, allowing for infinite background execution12.
+	pty
+	Boolean
+	Pseudo-terminal allocation toggle. Running in a pseudo-terminal is essential for interactive terminal applications or commands that require a teletypewriter interface11.
+	host
+	String
+	The execution routing target. This parameter accepts configurations routing to the local sandbox, the primary gateway, or remote execution nodes12.
+	When a custom application invokes the exec tool with the background parameter set to true, the OpenClaw Gateway does not wait for the command to terminate. Instead, it immediately returns a structured JSON payload containing a status indicator of "running" alongside a unique, cryptographically generated session identifier11. This identifier is the critical key required to manage the terminal session moving forward.
+Managing Background Terminals via the process Tool
+Once a command is successfully backgrounded, the process tool acts as the primary control mechanism for the running terminal session. The custom application can invoke the process tool to poll for new standard output, inject standard input, or forcefully terminate the task11. By chaining these actions, an application can effectively render a live, interactive background terminal window within its own graphical interface.
+The process tool supports multiple explicit actions to facilitate this interaction. The list action retrieves all currently running and recently finished background sessions, providing the application with an overview of system state11. The poll action drains the new output buffer for a specific session identifier and reports the current exit status, which is vital for real-time terminal updates11.
+For historical context, the log action retrieves aggregated output from the process11. This action supports offset and limit pagination, ensuring that when a user opens a terminal view within the application, the system can efficiently load the backlog of standard output without overwhelming the network transport11.
+When interaction is required, the write action sends standard input data directly to the running process11. For advanced interactions involving a pseudo-terminal, the send-keys action transmits explicit key tokens or byte sequences to the session, allowing the application to navigate command-line prompts or interactive scripts seamlessly11. Finally, the kill action allows the application to terminate the background session upon user request or operational timeout11.
+By systematically leveraging the exec tool to initiate tasks and the process tool to poll and interact with the resulting session identifiers, the client application can fully replicate a native background terminal experience without requiring the user to leave the conversational interface.
+Navigating Security Constraints, Sandboxing, and Exec Approvals
+A prevalent integration hurdle occurs when developers discover that the exec command is blocked or fails to execute in a programmatic environment, despite the conversational chat functioning perfectly. This is rarely indicative of a software defect; rather, it is the manifestation of OpenClaw's sophisticated, multi-layered security architecture enforcing its default fail-closed posture14. To permit a custom application to trigger background executions seamlessly, the integrator must comprehensively configure the sandbox policy, the tool policy, and the execution host's explicit approval settings.
+Layer One: Execution Routing and Sandbox Isolation
+OpenClaw determines the physical or virtual location of tool execution based on the agents.defaults.sandbox.mode configuration13. By default, sandboxing may be enabled to prevent destructive commands from affecting the host operating system. The configuration options dictate the strictness of this boundary.
+
+
+Sandbox Mode
+	Execution Behavior
+	off
+	Complete absence of sandboxing. All tools, including shell executions, run directly on the host operating system with the permissions of the Gateway process16.
+	non-main
+	Sandboxes only non-main sessions. This is the default posture if standard chats are intended for the host, but group or multi-channel sessions require isolation16.
+	all
+	Strict isolation. Every session, regardless of origin, runs within a sandboxed backend16.
+	If sandboxing is enabled—typically utilizing the Docker backend—commands initiated via the exec tool will mutate only the isolated container namespace16. Alternatively, the Secure Shell backend can be utilized to route executions to an isolated remote machine, utilizing either the mirror strategy to sync local workspaces or the remote strategy to maintain state strictly on the destination server16.
+If the custom application requires the command to affect the actual underlying Gateway host while sandboxing is active, the exec request must specify the host parameter as "gateway" and possess the appropriate elevated permissions12. Elevated mode serves as a controlled escape hatch. Invoking the elevated directive allows the command to break out of the sandbox and run on the host, provided the caller holds the requisite operator scopes and the action survives the approval matrix13.
+Layer Two: Tool Availability and Capability Policies
+Before a tool can be considered for execution, it must pass the rigorous filters of the tool policy13. If the exec tool is denied in the tools.deny array or omitted from the tools.allow array under the active tool profile, the underlying language model will not receive the tool schema13. Consequently, direct invocations via the application program interface will return a not_found error, blocking the execution entirely2.
+The tool policy explicitly manages availability based on capability groups. The group:runtime classification encapsulates the exec, process, and code_execution tools13. For agents intended to be strictly read-only, denying the group:runtime alongside mutating filesystem tools is imperative13. Conversely, to enable background terminal applications, the group:runtime must be explicitly permitted within the active agent profile.
+Layer Three: The Exec Approvals Interlock
+The most common reason automated or programmatic exec requests fail or hang is the Exec Approvals Interlock14. OpenClaw is fundamentally designed as a personal assistant; by default, it expects a human operator to review and approve potentially dangerous shell commands before execution14.
+Exec approvals are governed by the exec-approvals.json state file located on the physical execution host—either the Gateway machine or a remote executing Node14. The effective policy is determined by the intersection of requested tool configurations and the rigid host-local settings, primarily dictated by the security and ask parameters14.
+
+
+Parameter
+	Configuration Value
+	Resulting Operational Behavior
+	security
+	deny
+	Blocks all host execution requests outright, regardless of session-level overrides or user elevation requests14.
+	security
+	allowlist
+	Permits only commands that match an explicit, pre-defined allowlist or adhere to a strict safe-binary profile14.
+	security
+	full
+	Allows any arbitrary command to be executed, representing the most permissive operational stance14.
+	ask
+	always
+	Prompts for human approval on every single command iteration, superseding any automatic trust mechanisms14.
+	ask
+	on-miss
+	Prompts for human approval only if the specific command execution plan is not found within the established allowlist14.
+	ask
+	off
+	Completely disables human approval prompts, allowing autonomous execution of commands permitted by the security posture14.
+	For a custom application to seamlessly trigger background terminals without stalling on an invisible approval prompt, the execution host's exec-approvals.json must be configured to an operational state of full security with the ask parameter disabled14. Alternatively, if an enterprise zero-trust model is required, the specific commands the custom application intends to run must be pre-approved and populated within the allowlist14.
+To facilitate rapid, non-mutating shell operations without compromising the broader security posture, OpenClaw implements a "Safe Bins" fast-path. This mechanism permits standard input-only stream filters—such as grep, jq, sort, and wc—to execute without explicit allowlist entries or approval prompts18. The validation engine deterministically analyzes the argument vector to ensure file-oriented options are absent, preventing file-existence oracle behavior18. For complex applications relying on interpreter invocations, activating the strict inline evaluation policy ensures that carriers of inline scripts cannot bypass the primary approval mechanisms automatically18.
+Direct Tool Invocation: Bypassing the Language Model
+When a custom application user interface provides a specific button or a slash command—such as a directive to deploy a server—it is highly inefficient and unreliable to send the natural language text to the large language model and wait for it to synthetically emit an exec tool call2. Relying on the model for deterministic application actions consumes unnecessary tokens, introduces latency, and risks hallucinated parameters2.
+To execute these actions reliably, the application must utilize the direct tool invocation application programming interface5.
+The /tools/invoke Endpoint Architecture
+The POST /tools/invoke endpoint provides powerful, direct execution capabilities for local tools without needlessly invoking the language model3. This endpoint is always enabled and routes requests directly through the OpenClaw policy pipeline, ensuring that all security and sandboxing rules are still rigorously enforced5.
+To interact with this endpoint, the custom application must construct an HTTP POST request formatted precisely to match the internal tool schema. The endpoint accepts a JSON payload detailing the target tool, the execution arguments, and the required session routing context5.
+
+
+Payload Field
+	Type
+	Function within the Invocation Request
+	tool
+	String
+	The explicit name of the registered tool to invoke, such as exec or process19.
+	args
+	Object
+	A map containing the specific arguments required by the target tool. For exec, this includes the command string and backgrounding flags19.
+	sessionKey
+	String
+	The session identifier routing the tool execution to the correct agent context. Defaults to the main session if omitted5.
+	action
+	String
+	An optional sub-action identifier, utilized primarily by tools with complex internal routing, such as the process tool's poll or log actions19.
+	By binding custom application user interface elements directly to the /tools/invoke endpoint, integrators achieve deterministic, instant background execution of terminal tasks3. This architectural pattern is heavily utilized for workflow automation, webhooks, and the construction of mission control dashboards3.
+Authentication and Scoping for Direct Invocation
+It is critical to treat the /tools/invoke endpoint as a full operator-access surface for the gateway instance5. HTTP bearer authentication on this route does not utilize a narrow, per-user scope model5. A valid Gateway token provided to this endpoint operates with owner-level credentials.
+When authenticating via shared-secret modes—utilizing the Authorization: Bearer header with the primary gateway token—the endpoint restores the normal full operator default scope set5. This automatically includes operator.admin, operator.approvals, and operator.write, effectively overriding any narrower scopes declared in custom headers5. Consequently, the custom application holding this token has the unmitigated authority to bypass standard chat restrictions and invoke mutating shell commands directly, underscoring the necessity of securing the token distribution exclusively to the backend application server rather than exposing it to client-side code5.
+Architecting Interactive Slash Commands: The Telegram Experience
+The core user experience requirement—implementing an interactive slash command interface where typing the forward slash character reveals a dynamic menu of options, models, and executable tools—requires sophisticated synchronization between the custom application's frontend interface and the OpenClaw Gateway's backend state.
+OpenClaw inherently understands three distinct typologies of slash inputs when they are processed through the Gateway's chat pipeline20. Understanding these typologies is essential for replicating the experience accurately.
+The first typology encompasses standard standalone commands. These are messages that trigger Gateway actions directly, such as resetting a session or requesting status diagnostics20. They must be transmitted as the sole content of the message payload20.
+The second typology involves session directives. These are inline configuration modifiers that change the state of the active session20. Examples include altering the reasoning depth, toggling verbose tracing, or switching the active language model20. Crucially, the Gateway parses these directives, executes the state change, and subsequently strips the directive from the message body before the remaining text is transmitted to the language model20.
+The final typology consists of inline shortcuts, which are utility triggers executed immediately upon receipt and stripped before further processing20.
+To replicate the Telegram-style interactive menu, the frontend application must emulate the discovery and dispatch mechanisms associated with these command typologies.
+Phase One: Capability Discovery and Menu Construction
+To display a dynamic popup menu when the user initiates a slash command, the client application cannot rely on hardcoded lists. OpenClaw's available models and tools fluctuate based on active plugins, dynamically loaded skills, and current authentication profiles17. The application must programmatically fetch the current Gateway catalog to populate the user interface.
+For model discovery, the application queries the Gateway using the OpenResponses HTTP API via the GET /v1/models endpoint1. Alternatively, utilizing the App SDK, the application executes oc.models.list()10. To retrieve a highly specific, picker-sized catalog that filters out unavailable backends and presents only configured models, the application invokes the Gateway remote procedure call method models.list with the precise payload {"view": "configured"}22. This operation returns the active providers—such as Anthropic, DeepSeek, or local Ollama instances—alongside their exact model identifiers, ready for interface population22.
+If the slash menu intends to include actionable skills, the application must query the active workspace. User-invocable skills automatically generate corresponding slash commands20. The frontend application can fetch the available tool and skill catalog utilizing the App SDK's oc.tools.effective() method10. By passing the current session key, this method evaluates the active tool policy, the sandboxing state, and the provider restrictions, returning an accurate array of only the tools the user is presently authorized to trigger10.
+Phase Two: Frontend Implementation Logic
+The frontend application logic requires a real-time input listener attached to the primary chat interface. When the text input sequence begins with a forward slash, the application pauses standard message submission protocols and renders an overlay user interface—the interactive popup menu.
+The interface displays a consolidated list mapping the core directives, the dynamically fetched models, and the available skills. When the user navigates this menu and selects an option, the application captures the selection data and prepares for dispatch20.
+Phase Three: Dispatching the Command Intent
+Once the user confirms a selection within the user interface, the application possesses two primary architectural pathways for dispatching this intent to the OpenClaw Gateway.
+The first pathway is in-band dispatch through text injection. This is the most straightforward method and relies on OpenClaw's native parsing capabilities. If the user selects a new model from the menu, the frontend application formats the string dynamically and injects it into the chat payload. For example, the application transmits /model deepseek-v4-pro using the standard message sending channels or the App SDK's Session.send() method10. Because OpenClaw natively supports these directives, the Gateway's command registry intercepts the transmission, processes the model change, persists the configuration to the local session state, and generates a system acknowledgment without ever invoking the language model20. This method ensures flawless compatibility with OpenClaw's internal state management.
+The second pathway is out-of-band dispatch utilizing application programming interface overrides. For custom applications demanding stricter architectural control, sending raw text commands may introduce parsing risks. Instead, the application captures the user's interface selection and maps it to structured metadata for subsequent execution runs. If the user selects a new model, the application saves this state locally. On the subsequent chat submission to the OpenResponses API, the application injects the x-openclaw-model HTTP header to explicitly override the backend model for that specific conversational turn1. If utilizing the App SDK, the application passes the model property directly into the execution options block10.
+Similarly, if the user selects a slash command that maps to a specific background task, the application bypasses the chat completions endpoint entirely. It intercepts the submission and sends an out-of-band request directly to the /tools/invoke endpoint, utilizing the exact structured JSON payload required to run the exec tool in the background3.
+Handling Interactive Presentations and Feedback
+OpenClaw supports rich output presentations, which the custom application can parse to render interactive elements directly within the chat stream. When utilizing messaging tools internally, OpenClaw can emit presentation payloads containing semantic blocks, including text fields, dividers, and actionable buttons4.
+If the background terminal process, initiated via the exec tool, requires user input or confirmation, the agent can emit a presentation block requesting an action. The client application renders these blocks as native user interface buttons4. Clicking the button triggers the frontend to execute a follow-up /tools/invoke request to the process tool, utilizing the write or send-keys action5. This seamlessly feeds the user's input back into the background terminal's standard input stream, creating a fluid, interactive system management experience disguised as a standard chat conversation5.
+Establishing Persistent Authentication and Network Security
+Building this level of profound system integration demands rigorous adherence to OpenClaw's security boundary model. Because the custom application now possesses the unmitigated ability to execute background shell commands and manipulate the gateway state via programmatic directives, the authentication layer must be impenetrable15.
+Operator Authentication Frameworks
+The integration endpoints essential for this architecture—specifically the WebSocket handshake, the OpenResponses API, and the direct tool invocation routes—require Operator-level access validation4. The application must authenticate using the shared-secret authentication mode configured within the gateway settings5.
+When the custom application connects utilizing this central token, it bypasses granular user scopes and restores the full default operator scope set5. This broad authority is the technical mechanism that empowers the application to bypass standard conversational restrictions, manage node pairing protocols, and invoke the exec tool programmatically across all active sessions5.
+Tailscale Integration and Trusted Proxies
+For application architectures where the frontend or intermediate backend is not hosted on the identical loopback interface as the Gateway, exposing these powerful control-plane application programming interfaces directly to the public network represents a severe security vulnerability15. Integrators must utilize sophisticated network isolation strategies.
+OpenClaw natively supports integration with Tailscale Serve, configured via gateway.tailscale.mode: "serve"27. By binding the Gateway exclusively to the Tailnet, only verified machines within the encrypted mesh network can access the control plane. Alternatively, a reverse proxy configured with gateway.auth.mode: "trusted-proxy" allows the gateway to rely on identity-aware proxy headers injected by a secure upstream authentication provider1. This ensures that only cryptographically identity-verified traffic can reach the control plane to trigger background terminals, query the capability catalogs, or manipulate session state1.
+Node Delegation for Distributed Execution
+For advanced deployments, the custom application may need to execute background terminals on machines entirely separate from the primary Gateway server. OpenClaw facilitates this through Node delegation28. By deploying headless node hosts or the macOS companion application on secondary machines, the custom application can route executions by specifying the host parameter as node during the exec invocation12.
+This delegates the shell execution—via the system.run command—to the paired node over a secure, token-authenticated connection28. The node enforces its own local exec-approvals.json policy independently of the Gateway, allowing for highly granular, distributed security postures where the application interface controls multiple, geographically dispersed operational environments from a single chat-like interface15.
+Operational Synthesis and Conclusion
+The transition from a rudimentary chat interface to an advanced, agentic control system requires a deliberate migration away from stateless completion endpoints toward OpenClaw's stateful Gateway architecture. By establishing persistent connections via the App SDK or utilizing the robust OpenResponses HTTP API, a custom application gains the capacity to orchestrate complex, asynchronous workflows1.
+The technical limitation preventing background terminal execution is systematically resolved by invoking the exec tool directly through the /tools/invoke endpoint, utilizing the critical background: true and yieldMs parameters5. The application then maintains control over these asynchronous sessions by continuously polling standard output and injecting standard input via the process tool11. Crucially, the historical blocker preventing these executions is neutralized by meticulously configuring the execution host's exec-approvals.json policy, ensuring the security matrix permits autonomous programmatic execution without human intervention prompts13.
+Finally, the realization of an interactive, Telegram-style slash command interface is achieved through a structural decoupling of capability discovery and intent dispatch. The application frontend must aggressively query the Gateway's dynamic catalogs to construct the user interface overlay1. Upon user selection, the application executes the operational intent either by injecting OpenClaw's native directive syntax directly into the conversational payload or by utilizing out-of-band execution to trigger immediate, token-free system actions3. Through the meticulous implementation of these architectural patterns, the custom application transcends standard conversational limitations, realizing the full potential of autonomous, agent-driven system orchestration securely and efficiently.
+Karya yang dikutip
+1. OpenResponses API - OpenClaw docs, https://docs.openclaw.ai/gateway/openresponses-http-api
+2. [Feature]: POST /tools/invoke HTTP API does not include exec, read, write, edit tools #54391, https://github.com/openclaw/openclaw/issues/54391
+3. OpenClaw API Complete Guide 2026: Setup & Endpoints - GlobalGPT, https://www.glbgpt.com/hub/openclaw-api-complete-guide/
+4. Gateway integrations for external apps - OpenClaw docs, https://docs.openclaw.ai/gateway/external-apps
+5. Tools invoke API - OpenClaw docs, https://docs.openclaw.ai/gateway/tools-invoke-http-api
+6. What Is OpenClaw? Complete Guide to the Open-Source AI Agent - Milvus Blog, https://milvus.io/blog/openclaw-formerly-clawdbot-moltbot-explained-a-complete-guide-to-the-autonomous-ai-agent.md
+7. rohitg00/awesome-openclaw - GitHub, https://github.com/rohitg00/awesome-openclaw
+8. Gateway runbook - OpenClaw Docs, https://docs.openclaw.ai/gateway
+9. Operator scopes - OpenClaw docs, https://docs.openclaw.ai/gateway/operator-scopes
+10. OpenClaw App SDK, https://docs.openclaw.ai/concepts/openclaw-sdk
+11. Background exec and process tool - OpenClaw docs, https://docs.openclaw.ai/gateway/background-process
+12. Exec tool - OpenClaw Docs, https://docs.openclaw.ai/tools/exec
+13. Sandbox vs tool policy vs elevated - OpenClaw Docs, https://docs.openclaw.ai/gateway/sandbox-vs-tool-policy-vs-elevated
+14. Exec approvals - OpenClaw Docs, https://docs.openclaw.ai/tools/exec-approvals
+15. Security - OpenClaw Docs, https://docs.openclaw.ai/gateway/security
+16. Sandboxing - OpenClaw Docs, https://docs.openclaw.ai/gateway/sandboxing
+17. Overview - OpenClaw Docs, https://docs.openclaw.ai/tools
+18. Exec approvals — advanced - OpenClaw Docs, https://docs.openclaw.ai/tools/exec-approvals-advanced
+19. toolsinvoke package - github.com/a3tai/openclaw-go/toolsinvoke - Go Packages, https://pkg.go.dev/github.com/a3tai/openclaw-go/toolsinvoke
+20. Slash commands - OpenClaw Docs, https://docs.openclaw.ai/tools/slash-commands
+21. Plugin internals - OpenClaw docs, https://docs.openclaw.ai/plugins/architecture
+22. Gateway protocol - OpenClaw Docs, https://docs.openclaw.ai/gateway/protocol
+23. Ollama - OpenClaw docs, https://docs.openclaw.ai/providers/ollama
+24. Skills - OpenClaw Docs, https://docs.openclaw.ai/tools/skills
+25. CLI reference - OpenClaw Docs, https://docs.openclaw.ai/cli
+26. Admin HTTP RPC plugin - OpenClaw Docs, https://docs.openclaw.ai/plugins/admin-http-rpc
+27. Web - OpenClaw Docs, https://docs.openclaw.ai/web
+28. Nodes - OpenClaw Docs, https://docs.openclaw.ai/nodes
+29. macOS app - OpenClaw Docs, https://docs.openclaw.ai/platforms/macos

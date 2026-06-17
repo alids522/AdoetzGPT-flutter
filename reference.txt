@@ -1,0 +1,149 @@
+read this reference url
+https://docs.openwebui.com/getting-started/quick-start/connect-an-agent/openclaw/
+https://docs.openclaw.ai/tools/exec-approvals
+https://docs.openclaw.ai/gateway/tools-invoke-http-api
+https://docs.openclaw.ai/gateway/external-apps
+https://github.com/openclaw/openclaw/issues/8923
+
+Anda mengucapkan: openclaw apiOpenClaw exposes two primary API paths: the App SDK for connecting external applications, and the Gateway HTTP API for integrating tools and third-party frontends. OpenClaw's architecture operates as a self-hosted "Gateway" that bridges chat apps (like WhatsApp, Telegram, and Discord) to AI agents.1. The OpenClaw App SDKThe App SDK (available via @openclaw/sdk in Node.js) allows external scripts, CI jobs, IDE extensions, and dashboards to communicate directly with the OpenClaw Gateway. It lets you start agent runs, stream events, inspect transcripts, and manage tasks outside the core OpenClaw process.Usage Example:typescriptimport { OpenClaw } from '@openclaw/sdk';
+
+const oc = new OpenClaw({ 
+  url: "ws://127.0.0.1:18789", 
+  token: process.env.OPENCLAW_GATEWAY_TOKEN,
+  requestTimeoutMs: 30_000 
+});
+
+await oc.connect();
+
+const agent = await oc.agents.get("main"); 
+const run = await agent.run({ 
+  input: "Review this pull request and suggest the smallest safe fix.", 
+  model: "openai/gpt-5.5", 
+  sessionKey: "main", 
+  timeoutMs: 30_000,
+});
+
+for await (const event of run.events()) {
+  // Handle streaming events (delta, tool calls, etc.)
+  console.log(event.type);
+}
+
+const result = await run.wait({ timeoutMs: 120_000 });
+console.log(result.status);
+Gunakan kode dengan hati-hati.2. OpenAI-Compatible Chat Completions & EndpointsIf you are building frontends or connecting RAG systems that expect an OpenAI-formatted API (such as Open WebUI or LobeChat), you can enable the Gateway's OpenAI-compatible HTTP surface. This is disabled by default and can be configured in your openclaw.json5 config file.Once enabled, it serves the following routes:POST /v1/chat/completionsGET /v1/modelsPOST /v1/embeddingsAuthentication:Requests require your Gateway's bearer token or password passed via the standard Authorization: Bearer <token-or-password> header.Because OpenClaw is agent-first, the model field in your API request maps to an agent target rather than a raw model. You can use the x-openclaw-model header to target specific backend models.3. The Tools Invoke APIOpenClaw's Gateway also exposes a simple HTTP endpoint for invoking a single tool directly. It is always enabled by default and operates on your Gateway's authentication mechanism plus your defined tool policies.If you'd like, let me know:Are you building an App/Dashboard or developing a Plugin/Skill?What programming language or stack are you using?I can provide more tailored code snippets or setup instructions for your specific use case.6 situsAuthentication - OpenClaw Docs* Configuration. ConfigurationConfiguration referenceConfiguration — agentsConfiguration — channelsConfiguration — tools and custo...OpenClaw AIOpenAI chat completions - OpenClaw Docs* Configuration. ConfigurationConfiguration referenceConfiguration — agentsConfiguration — channelsConfiguration — tools and custo...OpenClaw AIOpenClaw App SDK* Gateway and service. BackupCrestodianDaemonDoctorGatewayHealthLogsMigrateOnboardResetSecretsSecuritySetupopenclaw statusUninstal...OpenClaw AITampilkan semuaAnda mengucapkan: can i access tool such terminal exec on openclaw openwebuiYes, you can access terminal execution on OpenClaw through Open WebUI, but because of how Open WebUI interacts with external agent frameworks, it does not work like a native Open WebUI tool. Instead, it works by passing the terminal execution capabilities of OpenClaw's own backend directly into the chat interface.Here is exactly how the integration works, how to configure it, and how to use it safely.How it Works Behind the ScenesWhen you connect OpenClaw to Open WebUI (either via an OpenAI-Compatible Connection or the OpenClaw Channels Plugin), Open WebUI behaves strictly as a frontend display.When you ask the AI to run a command:Open WebUI routes your prompt to the OpenClaw Gateway.OpenClaw processes the request and calls its built-in exec tool.The command runs on your underlying host machine or sandbox where the OpenClaw Gateway process is hosted.The terminal output streams directly back into your Open WebUI chat window.Step 1: Enable the Exec Tool in OpenClawBy default, executing shell commands is heavily guarded for security. Ensure your OpenClaw agent is configured to allow the exec tool in your openclaw.json5 or via the openclaw configure CLI wizard.You can set up your tools policy to allow execution, or enforce a strict allowlist / user-approval mechanism so it doesn't run arbitrary code without your consent:json5// openclaw.json5 snippet
+{
+  "tools": {
+    "exec": {
+      "enabled": true,
+      "defaultHost": "sandbox" // Or "gateway" if running directly on the host machine
+    }
+  },
+  "approvals": {
+    "exec": {
+      "mode": "ask" // Prompting you in the OpenClaw dashboard/logs before running terminal commands
+    }
+  }
+}
+Gunakan kode dengan hati-hati.Step 2: Route OpenClaw into Open WebUITo see and trigger the agent from your UI, make sure your connection to Open WebUI is live.Go to Open WebUI Admin Settings ➔ Connections ➔ OpenAI.Add your OpenClaw URL (typically http://localhost:18789/v1) and your Gateway Bearer Token.In your chat dropdown, select your OpenClaw agent (e.g., openclaw/default).Step 3: Executing Commands via ChatOnce connected, you don't need to write code or configure specific Open WebUI native tools. You simply chat with the model using natural language:"Check my local system memory usage and list the contents of the workspace.""Run a quick git status on this repository and tell me what changed."The OpenClaw agent will recognize the intent, trigger its exec tool wrapper, pass the system parameters, and print the live terminal stdout/stderr back into the Open WebUI markdown canvas.Important Security SafeguardsInteractive Blocks: Interactive CLI flows (such as openclaw channels login or manual SSH password inputs) are blocked from inside the exec tool because the agent cannot handle interactive channel authentication workflows mid-stream. Run those natively in your native server terminal.Open WebUI Open-Terminal Alternative: If you want a literal, interactive terminal window panel built into the Open WebUI sidebar rather than an agent running commands autonomously for you, look into connecting the native Open WebUI Open Terminal Integration instead.If you'd like, let me know:Is your OpenClaw instance running locally on your machine or on a remote VPS / Docker container?Do you want the agent to execute commands autonomously, or do you prefer to manually review/approve every command before it hits your terminal?14 situsExec tool - OpenClaw docsOn non-Windows gateway hosts, bash and zsh exec commands use a startup snapshot. OpenClaw captures sourceable aliases/functions an...OpenClaw AIOpenClaw - Open WebUIOpen WebUI * Quick Start. Connect a Provider. Connect an Agent. Open WebUI Computer (cptr) Hermes Agent. OpenClaw. Understanding S...Open WebUI Docsopen-webui/open-terminal: A computer you can curl - GitHubUsing with Open WebUI. Open Terminal integrates with Open WebUI, giving your AI assistants the ability to run commands, manage fil...GitHubTampilkan semuaAnda mengucapkan: if i have my own app how to exec toolIf you are building your own application, you can execute OpenClaw's exec tool directly from your backend code without needing an LLM to parse a prompt.You can accomplish this using either the Tools Invoke HTTP API or the official Node.js App SDK.Option 1: Using the Tools Invoke HTTP APIOpenClaw exposes a fast, token-free REST endpoint specifically for executing single tools directly.Endpoint: POST /tools/invokeAuthentication: Pass your gateway bearer token or password.Safety Note: Direct calls via this endpoint bypass the interactive UI approval prompts. Treat this as a direct remote code execution (RCE) surface for your application.Node.js / Fetch Examplejavascriptconst response = await fetch("http://127.0.0", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer YOUR_GATEWAY_TOKEN"
+  },
+  body: JSON.stringify({
+    tool: "exec", 
+    args: {
+      command: "echo 'Hello from my custom app!' && uname -a"
+    }
+  })
+});
+
+const data = await response.json();
+if (data.ok) {
+  console.log("Terminal Output:", data.result);
+} else {
+  console.error("Execution failed:", data.error.message);
+}
+Gunakan kode dengan hati-hati.Python Examplepythonimport requests
+
+url = "http://127.0.0"
+headers = {
+    "Authorization": "Bearer YOUR_GATEWAY_TOKEN",
+    "Content-Type": "application/json"
+}
+payload = {
+    "tool": "exec",
+    "args": {
+        "command": "git status"
+    }
+}
+
+response = requests.post(url, json=payload, headers=headers)
+print(response.json())
+Gunakan kode dengan hati-hati.Option 2: Using the OpenClaw App SDK (TypeScript/Node)If your app is built with Node.js, using @openclaw/sdk provides a native, type-safe method via the oc.tools.invoke() method.typescriptimport { OpenClaw } from '@openclaw/sdk';
+
+const oc = new OpenClaw({ 
+  url: "ws://127.0.0.1:18789", 
+  token: process.env.OPENCLAW_GATEWAY_TOKEN 
+});
+
+await oc.connect();
+
+// Invoke the exec tool directly through the policy pipeline
+const envelope = await oc.tools.invoke({
+  tool: "exec",
+  args: {
+    command: "ls -la /workspace"
+  }
+});
+
+if (envelope.ok) {
+  console.log("Success:", envelope.result);
+} else {
+  console.error("Error running command:", envelope.error);
+}
+Gunakan kode dengan hati-hati.Essential Configuration & Sandbox ConstraintsBefore invoking exec from your app, ensure that your openclaw.json5 configuration is set up to allow the tool to be called through the gateway:Allowlist the Tool: Ensure exec is explicitly listed under gateway.tools.allow or your agent profile policy so the API doesn't throw a 404 Not Found.Execution Context: By default, OpenClaw attempts to run commands within a secure sandbox environment rather than directly on your host machine to protect system files. If you want your custom app to modify files directly on the server hosting OpenClaw, make sure you configure your tool policy target to host=gateway (and isolate the server appropriately).If you'd like, let me know:What programming language or framework is your application built with?Does your app need to process the terminal output live as a stream, or is waiting for the final string result sufficient?7 situsExec tool - OpenClaw docsOn non-Windows hosts, exec uses SHELL when set; if SHELL is fish , it prefers bash (or sh ) from PATH to avoid fish-incompatible s...OpenClaw AITools invoke API - OpenClaw docs* Remote access. Remote accessRemote gateway setupTailscale. * Security. Network proxyFormal verification (security models)Threat ...OpenClaw AIOpenClaw App SDKReferenceRPC and API. The OpenClaw App SDK is the public client API for apps outside the OpenClaw process. Use @openclaw/sdk when ...OpenClaw AITampilkan semuaopenclawurlFile telah dihapusAnda mengucapkan: my app is success connected with api via https://openclawurl/v1but it can call tool such terminal it act like chatbot only, cannot exec anythingalso its possible to make slash command on my appMengapa Aplikasi Anda Hanya Bertindak Seperti Chatbot?Saat aplikasi Anda terhubung ke OpenClaw via endpoint /v1 (OpenAI-Compatible Chat Completions API), kendala utamanya adalah OpenAI spec secara default tidak otomatis mengirimkan tools bawaan OpenClaw ke dalam chat loop, kecuali aplikasi Anda secara eksplisit meminta atau mendefinisikannya dalam payload request.Akibatnya, AI tidak tahu bahwa ia memiliki akses ke terminal (exec) dan hanya membalas dalam bentuk teks biasa (hallucination) seperti: "Baik, saya akan menjalankan perintah tersebut..." tanpa benar-benar mengeksekusinya.Untuk mengaktifkan fungsi terminal execution dari aplikasi buatan Anda, berikut adalah langkah-langkah solusinya:Solusi 1: Meneruskan Tools Melalui Request /v1 (Cara OpenAI)Jika Anda ingin mempertahankan koneksi standar /v1/chat/completions, Anda harus menyertakan skema fungsi exec ke dalam parameter tools pada payload HTTP POST Anda.Berikut contoh struktur payload yang dikirim dari aplikasi Anda:json{
+  "model": "openclaw/default",
+  "messages": [
+    { "role": "user", "content": "Cek versi kernel operating sistem ini" }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "exec",
+        "description": "Menjalankan perintah terminal atau shell script pada sistem.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "description": "Perintah bash/shell lengkap yang ingin dieksekusi."
+            }
+          },
+          "required": ["command"]
+        }
+      }
+    }
+  ]
+}
+Gunakan kode dengan hati-hati.Ketika model merespons dengan tool_calls, backend aplikasi Anda harus menangkap panggilan fungsi tersebut, meneruskannya ke tool internal OpenClaw, lalu mengembalikan hasilnya ke model.Solusi 2: Bypass LLM Menggunakan Tools Invoke API (Sangat Direkomendasikan)Jika aplikasi Anda ingin langsung mengeksekusi terminal tanpa perlu meminta AI berpikir atau mendeteksi teks (misalnya saat tombol di aplikasi Anda diklik), jangan gunakan endpoint /v1. Gunakan endpoint khusus OpenClaw berikut:Endpoint: POST https://openclawurl/tools/invokeHeaders: Authorization: Bearer <TOKEN> dan Content-Type: application/jsonBody:json{
+  "tool": "exec",
+  "args": {
+    "command": "uname -a && df -h"
+  }
+}
+Gunakan kode dengan hati-hati.Verifikasi Penting pada File openclaw.json5Pastikan pengaturan keamanan pada server OpenClaw Anda tidak memblokir fungsi exec. Buka konfigurasi OpenClaw Anda dan pastikan baris ini diaktifkan:json5{
+  "gateway": {
+    "tools": {
+      "allow": ["exec", "web-search"] // Pastikan 'exec' diizinkan masuk lewat gateway API
+    }
+  },
+  "tools": {
+    "exec": {
+      "enabled": true,
+      "defaultHost": "sandbox" // 'sandbox' untuk keamanan, atau 'gateway' untuk akses root hos asli
+    }
+  }
+}
+Gunakan kode dengan hati-hati.Apakah Mungkin Membuat Slash Command (/command) di Aplikasi Sendiri?Ya, sangat mungkin, namun metodenya bergantung pada bagaimana arsitektur aplikasi Anda dibangun:1. Jika Aplikasi Anda Menampilkan Chat UI Sendiri (Custom Frontend)OpenClaw memiliki sistem Slash Command Parser bawaan secara native (seperti /new, /reset, /model).Saat user mengetik /exec atau perintah kustom lainnya di aplikasi Anda, aplikasi Anda cukup menangkap teks tersebut sebelum dikirim ke API.Jika teks diawali dengan tanda /, aplikasi Anda bisa langsung memotong jalur chat biasa dan mengarahkannya ke fungsi backend internal Anda sendiri, atau langsung meneruskannya ke POST /tools/invoke.2. Jika Menggunakan Sistem Registrasi OpenClaw (Text Trigger Parsing)Hingga pembaruan framework OpenClaw saat ini, sistem registrasi slash command kustom via UI autocomplete (seperti di Discord) masih berbasis built-in commands. Strategi terbaik yang digunakan oleh para developer aplikasi kustom saat ini adalah Text Trigger Parsing:Aplikasi Anda bertindak sebagai interseptor. Jika pesan mendeteksi awalan /mycommand [arg], jalankan logika aplikasi Anda secara lokal, lalu cetak hasilnya kembali ke layar chat.Jika Anda menemui kendala saat mencoba salah satu metode di atas, beri tahu saya:Apakah Anda membangun aplikasi ini menggunakan JavaScript/Node.js, Python, atau framework lainnya?Apakah perintah terminal yang ingin dijalankan bersifat statis (sudah ditentukan aplikasi) atau dinamis (bebas diketik oleh user aplikasi)?

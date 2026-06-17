@@ -256,6 +256,15 @@ class _HeaderState extends State<_Header> {
             ),
             const SizedBox(width: 8),
           ],
+          if (app.currentView == AppView.chat && activeTarget.type == ChatTargetType.agentServer) ...[
+            RoundIconButton(
+              icon: LucideIcons.phone,
+              color: p.onSurface,
+              tooltip: 'Voice Call',
+              onPressed: () => app.startLiveConversation(isOpenClawProxy: true),
+            ),
+            const SizedBox(width: 8),
+          ],
           RoundIconButton(
             icon: LucideIcons.edit2,
             color: p.onSurface,

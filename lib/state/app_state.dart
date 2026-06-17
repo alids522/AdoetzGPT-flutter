@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:http/http.dart' as http;
 import 'package:bcrypt/bcrypt.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -1946,7 +1947,7 @@ class AdoetzAppState extends ChangeNotifier {
     unawaited(_persistAndScheduleRemote());
   }
 
-  Future<void> startLiveConversation() async {
+  Future<void> startLiveConversation({bool isOpenClawProxy = false}) async {
     if (isLiveActive || isLiveConnecting) return;
 
     if (!kIsWeb) {
@@ -1990,6 +1991,51 @@ class AdoetzAppState extends ChangeNotifier {
         memories: genSettings.memoryEnabled ? memories : const [],
         thinkingMode: isThinkingMode,
         userName: userName,
+        systemInstructionOverride: isOpenClawProxy 
+           ? 'You are a voice interface for the OpenClaw agent. Whenever the user asks a question, you MUST use the `query_openclaw_agent` tool to get the answer, and then read the answer back to the user exactly as provided.'
+           : null,
+        tools: isOpenClawProxy ? [
+           {
+              'name': 'query_openclaw_agent',
+              'description': 'Use this tool to ask the OpenClaw agent for an answer to the user\'s query.',
+              'parameters': {
+                'type': 'OBJECT',
+                'properties': {
+                  'prompt': {'type': 'STRING'}
+                },
+                'required': ['prompt']
+              }
+           }
+        ] : null,
+        onToolCall: isOpenClawProxy ? (name, args) async {
+            if (name == 'query_openclaw_agent') {
+               final prompt = args['prompt'] as String?;
+               if (prompt == null || prompt.isEmpty) return {'error': 'prompt is required'};
+               
+               try {
+                  final response = await http.post(
+                     Uri.parse('https://openclaw.alids.app/v1/chat/completions'),
+                     headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer Akatsuki2.'
+                     },
+                     body: jsonEncode({
+                        'model': 'openclaw/main',
+                        'messages': [{'role': 'user', 'content': prompt}]
+                     })
+                  );
+                  if (response.statusCode >= 200 && response.statusCode < 300) {
+                     final data = jsonDecode(response.body);
+                     return {'answer': data['choices'][0]['message']['content']};
+                  } else {
+                     return {'error': 'HTTP ${response.statusCode}: ${response.body}'};
+                  }
+               } catch (e) {
+                  return {'error': e.toString()};
+               }
+            }
+            return {'error': 'Unknown tool'};
+        } : null,
         onStatus: (status) {
           if (_liveService != service) return;
           liveStatus = status;

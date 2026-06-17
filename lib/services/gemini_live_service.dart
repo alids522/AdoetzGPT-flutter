@@ -35,6 +35,9 @@ class GeminiLiveService {
     required this.onError,
     required this.onClosed,
     this.userName = 'User',
+    this.tools,
+    this.systemInstructionOverride,
+    this.onToolCall,
   });
 
   static const _inputSampleRate = 24000;
@@ -60,6 +63,10 @@ class GeminiLiveService {
   final LiveVoidCallback onTurnComplete;
   final LiveErrorCallback onError;
   final LiveVoidCallback onClosed;
+  
+  final List<Map<String, dynamic>>? tools;
+  final String? systemInstructionOverride;
+  final Future<Map<String, dynamic>> Function(String name, Map<String, dynamic> args)? onToolCall;
 
   final _recorder = AudioRecorder();
   final _player = LiveAudioPlayer();
@@ -212,9 +219,10 @@ class GeminiLiveService {
         },
         'systemInstruction': {
           'parts': [
-            {'text': _systemInstruction()},
+            {'text': systemInstructionOverride ?? _systemInstruction()},
           ],
         },
+        if (tools != null && tools!.isNotEmpty) 'tools': [{'functionDeclarations': tools}],
       },
     };
   }
@@ -278,7 +286,50 @@ class GeminiLiveService {
 
       final toolCall = data['toolCall'];
       if (toolCall != null) {
-        onStatus('Gemini Live requested a tool call that is not available.');
+        if (onToolCall != null) {
+          final functionCalls = toolCall['functionCalls'];
+          if (functionCalls is List && functionCalls.isNotEmpty) {
+            final firstCall = functionCalls.first;
+            final name = stringValue(firstCall['name']);
+            final args = firstCall['args'] is Map ? firstCall['args'] as Map<String, dynamic> : <String, dynamic>{};
+            final id = stringValue(firstCall['id']);
+            
+            onStatus('Executing tool: $name...');
+            onToolCall!(name, args).then((result) {
+              if (!_closed && _running) {
+                _send({
+                  'toolResponse': {
+                    'functionResponses': [
+                      {
+                        'id': id,
+                        'name': name,
+                        'response': result,
+                      }
+                    ]
+                  }
+                });
+                onStatus('Listening...');
+              }
+            }).catchError((e) {
+              if (!_closed && _running) {
+                _send({
+                  'toolResponse': {
+                    'functionResponses': [
+                      {
+                        'id': id,
+                        'name': name,
+                        'response': {'error': e.toString()},
+                      }
+                    ]
+                  }
+                });
+                onStatus('Listening...');
+              }
+            });
+          }
+        } else {
+          onStatus('Gemini Live requested a tool call that is not available.');
+        }
       }
 
       final goAway = data['goAway'];
