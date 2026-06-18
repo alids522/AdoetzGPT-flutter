@@ -1,3 +1,5 @@
+import com.android.build.api.dsl.LibraryExtension
+
 allprojects {
     repositories {
         google()
@@ -20,16 +22,12 @@ subprojects {
 }
 
 subprojects {
-    afterEvaluate {
-        if (name == "mp_audio_stream") {
-            extensions.findByName("android")?.let { androidExtension ->
-                val methods = androidExtension.javaClass.methods
-                val setCompileSdk =
-                    methods.firstOrNull { it.name == "setCompileSdk" && it.parameterTypes.size == 1 }
-                        ?: methods.firstOrNull {
-                            it.name == "setCompileSdkVersion" && it.parameterTypes.size == 1
-                        }
-                setCompileSdk?.invoke(androidExtension, 34)
+    if (name == "mp_audio_stream") {
+        plugins.withId("com.android.library") {
+            extensions.configure<LibraryExtension>("android") {
+                if (compileSdk < 34) {
+                    compileSdk = 34
+                }
             }
         }
     }
