@@ -21,11 +21,12 @@ subprojects {
 
 subprojects {
     if (name == "mp_audio_stream") {
-        plugins.withId("com.android.library") {
-            afterEvaluate {
-                extensions.configure<com.android.build.gradle.LibraryExtension>("android") {
-                    if ((compileSdk ?: 0) < 36) compileSdk = 36
-                }
+        val buildFile = file("${projectDir.absolutePath}/build.gradle")
+        if (buildFile.exists()) {
+            var content = buildFile.readText()
+            if (content.contains("compileSdkVersion 31")) {
+                content = content.replace("compileSdkVersion 31", "compileSdkVersion 34")
+                buildFile.writeText(content)
             }
         }
     }
