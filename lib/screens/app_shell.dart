@@ -932,7 +932,7 @@ class _AppDrawerState extends State<_AppDrawer> {
                   icon: LucideIcons.edit2,
                   label: copy.t('sidebar', 'newSession'),
                   active: false,
-                  onTap: () => _closeAfter(context, app.createSession),
+                  onTap: () => _closeAfter(context, () => app.createSession(keepTarget: app.activeChatTarget.isAgentServer)),
                 ),
                 _NavTile(
                   icon: LucideIcons.search,

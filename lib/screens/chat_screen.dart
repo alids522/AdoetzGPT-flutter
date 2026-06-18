@@ -29,6 +29,20 @@ import '../ui/app_theme.dart';
 import '../widgets/live_camera_feed.dart';
 import '../widgets/streaming_text_renderer.dart';
 
+class SlashCommand {
+  const SlashCommand({
+    required this.name,
+    required this.description,
+    required this.category,
+    required this.action,
+  });
+
+  final String name;
+  final String description;
+  final String category;
+  final bool Function(BuildContext context, AdoetzAppState app) action;
+}
+
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 
@@ -42,6 +56,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final attachments = <AttachmentData>[];
   String? editingId;
   final editController = TextEditingController();
+
+  bool _showSlashCommands = false;
+  String _slashCommandQuery = '';
 
   bool _showScrollToBottom = false;
 
@@ -57,7 +74,124 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     scrollController.addListener(_onScroll);
+    input.addListener(_onInputChanged);
     unawaited(_initSpeech());
+  }
+
+  void _onInputChanged() {
+    final text = input.text;
+    final app = context.read<AdoetzAppState>();
+    
+    // Only show slash commands in agent mode when text starts with /
+    if (app.activeChatTarget.isAgentServer && text.startsWith('/')) {
+      final query = text.substring(1).toLowerCase();
+      if (!_showSlashCommands || _slashCommandQuery != query) {
+        setState(() {
+          _showSlashCommands = true;
+          _slashCommandQuery = query;
+        });
+      }
+    } else {
+      if (_showSlashCommands) {
+        setState(() => _showSlashCommands = false);
+      }
+    }
+  }
+
+  List<SlashCommand> _getAvailableCommands() {
+    return [
+      // Core Chat
+      SlashCommand(name: 'new', description: 'Start a new chat session.', category: 'Core Chat', action: (c, app) {
+        app.createSession(keepTarget: true);
+        return true;
+      }),
+      SlashCommand(name: 'clear', description: 'Clear current chat messages.', category: 'Core Chat', action: (c, app) {
+        app.clearAgentSessions(app.activeChatTarget.connectorId ?? '');
+        return true;
+      }),
+      SlashCommand(name: 'delete', description: 'Delete current session.', category: 'Core Chat', action: (c, app) {
+        app.deleteSession(app.currentSession.id);
+        return true;
+      }),
+      SlashCommand(name: 'rename', description: 'Rename current session.', category: 'Core Chat', action: (c, app) => false),
+      SlashCommand(name: 'sessions', description: 'Show session list.', category: 'Core Chat', action: (c, app) => false),
+      SlashCommand(name: 'search', description: 'Search chat history.', category: 'Core Chat', action: (c, app) => false),
+      SlashCommand(name: 'help', description: 'Show all slash commands.', category: 'Core Chat', action: (c, app) => false),
+
+      // Model
+      SlashCommand(name: 'model', description: 'Open model picker.', category: 'Model', action: (c, app) => false),
+      SlashCommand(name: 'models', description: 'Show all available models.', category: 'Model', action: (c, app) => false),
+      SlashCommand(name: 'model text', description: 'Show text models only.', category: 'Model', action: (c, app) => false),
+      SlashCommand(name: 'model image', description: 'Show image models only.', category: 'Model', action: (c, app) => false),
+      SlashCommand(name: 'model video', description: 'Show video models only.', category: 'Model', action: (c, app) => false),
+      SlashCommand(name: 'model live', description: 'Show live voice models only.', category: 'Model', action: (c, app) => false),
+
+      // Mode Switching
+      SlashCommand(name: 'text', description: 'Switch to normal text chat.', category: 'Mode Switching', action: (c, app) => false),
+      SlashCommand(name: 'image', description: 'Switch to image generation mode.', category: 'Mode Switching', action: (c, app) => false),
+      SlashCommand(name: 'video', description: 'Switch to video generation mode.', category: 'Mode Switching', action: (c, app) => false),
+      SlashCommand(name: 'live', description: 'Switch to live voice mode.', category: 'Mode Switching', action: (c, app) => false),
+
+      // Generation Control
+      SlashCommand(name: 'stop', description: 'Stop current generation.', category: 'Generation Control', action: (c, app) {
+        app.stopGeneration();
+        return true;
+      }),
+      SlashCommand(name: 'retry', description: 'Retry last response.', category: 'Generation Control', action: (c, app) => false),
+      SlashCommand(name: 'regenerate', description: 'Regenerate last AI response.', category: 'Generation Control', action: (c, app) => false),
+      SlashCommand(name: 'continue', description: 'Continue from last response.', category: 'Generation Control', action: (c, app) => false),
+
+      // Thinking / Behavior
+      SlashCommand(name: 'thinking', description: 'Toggle thinking mode.', category: 'Thinking', action: (c, app) {
+        app.toggleThinkingMode();
+        return true;
+      }),
+      SlashCommand(name: 'thinking on', description: 'Enable thinking mode.', category: 'Thinking', action: (c, app) {
+        if (!app.isThinkingMode) app.toggleThinkingMode();
+        return true;
+      }),
+      SlashCommand(name: 'thinking off', description: 'Disable thinking mode.', category: 'Thinking', action: (c, app) {
+        if (app.isThinkingMode) app.toggleThinkingMode();
+        return true;
+      }),
+      SlashCommand(name: 'persona', description: 'Open personality selector.', category: 'Thinking', action: (c, app) => false),
+      SlashCommand(name: 'persona default', description: 'Reset personality.', category: 'Thinking', action: (c, app) => false),
+      SlashCommand(name: 'system', description: 'Show current system/personality instruction.', category: 'Thinking', action: (c, app) => false),
+
+      // Image Tools
+      SlashCommand(name: 'aspect', description: 'Open aspect ratio picker.', category: 'Image Tools', action: (c, app) => false),
+      SlashCommand(name: 'aspect 1:1', description: 'Set square image ratio.', category: 'Image Tools', action: (c, app) => false),
+      SlashCommand(name: 'aspect 16:9', description: 'Set widescreen image ratio.', category: 'Image Tools', action: (c, app) => false),
+      SlashCommand(name: 'aspect 9:16', description: 'Set vertical image ratio.', category: 'Image Tools', action: (c, app) => false),
+      SlashCommand(name: 'gallery', description: 'Open gallery.', category: 'Image Tools', action: (c, app) => false),
+      SlashCommand(name: 'upload', description: 'Open image upload picker.', category: 'Image Tools', action: (c, app) => false),
+
+      // Video Tools
+      SlashCommand(name: 'duration', description: 'Open video duration picker.', category: 'Video Tools', action: (c, app) => false),
+      SlashCommand(name: 'duration 5', description: 'Set video duration to 5 seconds.', category: 'Video Tools', action: (c, app) => false),
+      SlashCommand(name: 'duration 8', description: 'Set video duration to 8 seconds.', category: 'Video Tools', action: (c, app) => false),
+      SlashCommand(name: 'extend', description: 'Extend latest generated video.', category: 'Video Tools', action: (c, app) => false),
+
+      // Settings
+      SlashCommand(name: 'settings', description: 'Open settings.', category: 'Settings', action: (c, app) {
+        app.setView(AppView.settings);
+        return true;
+      }),
+      SlashCommand(name: 'theme', description: 'Toggle light/dark theme.', category: 'Settings', action: (c, app) => false),
+      SlashCommand(name: 'theme light', description: 'Set light theme.', category: 'Settings', action: (c, app) => false),
+      SlashCommand(name: 'theme dark', description: 'Set dark theme.', category: 'Settings', action: (c, app) => false),
+      SlashCommand(name: 'language', description: 'Open language picker.', category: 'Settings', action: (c, app) => false),
+      SlashCommand(name: 'language en', description: 'Switch to English.', category: 'Settings', action: (c, app) => false),
+      SlashCommand(name: 'language id', description: 'Switch to Indonesian.', category: 'Settings', action: (c, app) => false),
+
+      // Developer/Admin
+      SlashCommand(name: 'debug', description: 'Show app debug info.', category: 'Admin', action: (c, app) => false),
+      SlashCommand(name: 'status', description: 'Show current app status.', category: 'Admin', action: (c, app) => false),
+      SlashCommand(name: 'storage', description: 'Show storage/database info.', category: 'Admin', action: (c, app) => false),
+      SlashCommand(name: 'export', description: 'Export current chat.', category: 'Admin', action: (c, app) => false),
+      SlashCommand(name: 'import', description: 'Import chat data.', category: 'Admin', action: (c, app) => false),
+      SlashCommand(name: 'version', description: 'Show app version.', category: 'Admin', action: (c, app) => false),
+    ];
   }
 
   Future<void> _initSpeech() async {
@@ -190,6 +324,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _dictationHoldActive = false;
     unawaited(_speechToText.stop());
     _soundLevel.dispose();
+    input.removeListener(_onInputChanged);
     input.dispose();
     scrollController.removeListener(_onScroll);
     scrollController.dispose();
@@ -302,6 +437,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       onRemove: (index) =>
                           setState(() => attachments.removeAt(index)),
                     ),
+                  if (_showSlashCommands)
+                    _SlashCommandMenu(
+                      query: _slashCommandQuery,
+                      commands: _getAvailableCommands(),
+                      onSelect: (command) {
+                        input.text = '/${command.name}';
+                        _sendOrLive();
+                      },
+                    ),
                   ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 980),
                     child: SizedBox(
@@ -387,19 +531,36 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       app.stopGeneration();
       return;
     }
+    
+    final text = input.text.trim();
+    if (app.activeChatTarget.isAgentServer && text.startsWith('/')) {
+      final commandName = text.substring(1).toLowerCase();
+      final commands = _getAvailableCommands();
+      final match = commands.firstWhere((c) => c.name.toLowerCase() == commandName, orElse: () => SlashCommand(name: '', description: '', category: '', action: (c, a) => false));
+      
+      if (match.name.isNotEmpty) {
+        final handled = match.action(context, app);
+        if (handled) {
+          input.clear();
+          setState(() => _showSlashCommands = false);
+          return;
+        }
+      }
+    }
+
     if (input.text.trim().isEmpty && attachments.isEmpty) {
       FocusScope.of(context).unfocus();
       unawaited(app.startLiveConversation());
       return;
     }
-    final text = input.text;
+    final messageText = input.text;
     final files = List<AttachmentData>.from(attachments);
     input.clear();
     setState(attachments.clear);
     if (_isListening) {
       unawaited(_stopDictation());
     }
-    app.sendMessage(text, files);
+    app.sendMessage(messageText, files);
     Future.delayed(const Duration(milliseconds: 120), () {
       if (scrollController.hasClients) {
         scrollController.animateTo(
@@ -1425,6 +1586,96 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
       horizontalRuleDecoration: BoxDecoration(
         border: Border(
           top: BorderSide(color: p.onSurfaceVariant.withValues(alpha: 0.34)),
+        ),
+      ),
+    );
+  }
+}
+
+class _SlashCommandMenu extends StatelessWidget {
+  const _SlashCommandMenu({
+    required this.query,
+    required this.commands,
+    required this.onSelect,
+  });
+
+  final String query;
+  final List<SlashCommand> commands;
+  final ValueChanged<SlashCommand> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = AppPalette.fromBrightness(Theme.of(context).brightness == Brightness.dark);
+    final filtered = commands
+        .where((c) => c.name.toLowerCase().startsWith(query))
+        .take(6)
+        .toList();
+
+    if (filtered.isEmpty) return const SizedBox.shrink();
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 980),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: p.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: p.outline.withValues(alpha: 0.3)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.15),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+            )
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: filtered.map((cmd) {
+              return Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => onSelect(cmd),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: p.primary.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(LucideIcons.terminalSquare, size: 16, color: p.primary),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '/${cmd.name}',
+                                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: p.onSurface),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                cmd.description,
+                                style: TextStyle(fontSize: 12, color: p.onSurfaceVariant),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
         ),
       ),
     );

@@ -1497,9 +1497,9 @@ class AdoetzAppState extends ChangeNotifier {
     ].join('\n');
   }
 
-  void createSession() {
+  void createSession({bool keepTarget = false}) {
     String targetId = activeChatTarget.id;
-    if (targetId.startsWith('agent:')) {
+    if (targetId.startsWith('agent:') && !keepTarget) {
       targetId = 'model:$selectedModel';
       selectedTargetId = targetId;
     }
@@ -1542,7 +1542,7 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void headerChatShortcut() {
-    createSession();
+    createSession(keepTarget: activeChatTarget.isAgentServer);
   }
 
   void selectSession(String id) {
