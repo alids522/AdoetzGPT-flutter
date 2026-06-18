@@ -1,3 +1,5 @@
+import com.android.build.api.dsl.LibraryExtension
+
 allprojects {
     repositories {
         google()
@@ -17,6 +19,18 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(":app")
+}
+
+subprojects {
+    if (name == "mp_audio_stream") {
+        plugins.withId("com.android.library") {
+            extensions.configure<LibraryExtension>("android") {
+                if (compileSdk < 34) {
+                    compileSdk = 34
+                }
+            }
+        }
+    }
 }
 
 tasks.register<Delete>("clean") {
