@@ -22,8 +22,10 @@ subprojects {
 subprojects {
     if (name == "mp_audio_stream") {
         plugins.withId("com.android.library") {
-            extensions.configure<com.android.build.gradle.LibraryExtension>("android") {
-                if (compileSdk != null && compileSdk!! < 34) compileSdk = 34
+            afterEvaluate {
+                extensions.configure<com.android.build.gradle.LibraryExtension>("android") {
+                    if ((compileSdk ?: 0) < 36) compileSdk = 36
+                }
             }
         }
     }
