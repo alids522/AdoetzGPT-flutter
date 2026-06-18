@@ -19,6 +19,22 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+subprojects {
+    afterEvaluate {
+        if (name == "mp_audio_stream") {
+            extensions.findByName("android")?.let { androidExtension ->
+                val methods = androidExtension.javaClass.methods
+                val setCompileSdk =
+                    methods.firstOrNull { it.name == "setCompileSdk" && it.parameterTypes.size == 1 }
+                        ?: methods.firstOrNull {
+                            it.name == "setCompileSdkVersion" && it.parameterTypes.size == 1
+                        }
+                setCompileSdk?.invoke(androidExtension, 34)
+            }
+        }
+    }
+}
+
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
