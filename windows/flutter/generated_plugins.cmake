@@ -6,6 +6,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   app_links
   audioplayers_windows
   file_selector_windows
+  passkeys_windows
   permission_handler_windows
   record_windows
   speech_to_text_windows

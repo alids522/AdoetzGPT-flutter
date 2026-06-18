@@ -272,10 +272,7 @@ class GeminiLiveService {
         if (serverContent['interrupted'] == true) {
           onStatus('Interrupted.');
           _cancelOutputLevelTimers();
-          _player.stop().then(
-            (_) => _player.start(sampleRate: _outputSampleRate),
-            onError: (_) {},
-          );
+          _player.clear();
         }
 
         if (serverContent['turnComplete'] == true) {

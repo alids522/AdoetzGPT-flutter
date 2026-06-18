@@ -24,6 +24,27 @@ class LiveAudioPlayer {
     }
   }
 
+  Future<void> clear() async {
+    try {
+      if (Platform.isWindows || Platform.isIOS || Platform.isMacOS || Platform.isLinux) {
+        if (_audioStream != null) {
+          _audioStream!.uninit();
+          await Future.delayed(const Duration(milliseconds: 50));
+          _audioStream!.init(
+            bufferMilliSec: 30000,
+            waitingBufferMilliSec: 100,
+            channels: 1,
+            sampleRate: 24000,
+          );
+          _audioStream!.resume();
+        }
+      } else {
+        await _channel.invokeMethod<void>('stop');
+        await _channel.invokeMethod<void>('start', {'sampleRate': 24000});
+      }
+    } catch (_) {}
+  }
+
   Future<void> playPcm16(Uint8List bytes, {int sampleRate = 24000}) async {
     try {
       if (Platform.isWindows || Platform.isIOS || Platform.isMacOS || Platform.isLinux) {
@@ -38,8 +59,8 @@ class LiveAudioPlayer {
       } else {
         await _channel.invokeMethod<void>('play', bytes);
       }
-    } on MissingPluginException {
-      // Keep Live usable for text transcripts where native playback is absent.
+    } catch (_) {
+      // Keep Live usable for text transcripts where native playback is absent or busy.
     }
   }
 
