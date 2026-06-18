@@ -417,6 +417,23 @@ class GeminiLiveService {
     }
   }
 
+  void injectClientMessage(String message) {
+    if (!_running || _closed) return;
+    _send({
+      'clientContent': {
+        'turns': [
+          {
+            'role': 'user',
+            'parts': [
+              {'text': message}
+            ]
+          }
+        ],
+        'turnComplete': true
+      }
+    });
+  }
+
   String _normaliseImageMime(String mimeType) {
     final lower = mimeType.toLowerCase().trim();
     return lower == 'image/png' ? 'image/png' : 'image/jpeg';

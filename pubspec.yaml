@@ -73,6 +73,7 @@ dependencies:
   speech_to_text: ^7.4.0
   tiktoken: ^1.0.3
   supabase_flutter: ^2.14.2
+  mp_audio_stream: ^0.2.2
 dev_dependencies:
   flutter_test:
     sdk: flutter

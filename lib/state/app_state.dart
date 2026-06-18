@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
@@ -116,7 +115,6 @@ class AdoetzAppState extends ChangeNotifier {
 
   Future<void> _playSound(String name) async {
     if (!soundEffectsEnabled) return;
-    if (!kIsWeb && Platform.isWindows) return;
     try {
       await _audioPlayer.play(AssetSource('audio/$name'));
     } catch (_) {}
@@ -2011,28 +2009,32 @@ class AdoetzAppState extends ChangeNotifier {
             if (name == 'query_openclaw_agent') {
                final prompt = args['prompt'] as String?;
                if (prompt == null || prompt.isEmpty) return {'error': 'prompt is required'};
+               Future(() async {
+                 try {
+                    final response = await http.post(
+                       Uri.parse('https://openclaw.alids.app/v1/chat/completions'),
+                       headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': 'Bearer Akatsuki2.'
+                       },
+                       body: jsonEncode({
+                          'model': 'openclaw/main',
+                          'messages': [{'role': 'user', 'content': prompt}]
+                       })
+                    );
+                    if (response.statusCode >= 200 && response.statusCode < 300) {
+                       final data = jsonDecode(response.body);
+                       final answer = data['choices'][0]['message']['content'];
+                       service.injectClientMessage('SYSTEM NOTIFICATION: The OpenClaw task finished. Result:\n$answer\n\nPlease tell the user about this result naturally.');
+                    } else {
+                       service.injectClientMessage('SYSTEM NOTIFICATION: The OpenClaw task failed. HTTP ${response.statusCode}');
+                    }
+                 } catch (e) {
+                    service.injectClientMessage('SYSTEM NOTIFICATION: The OpenClaw task failed with error: $e');
+                 }
+               });
                
-               try {
-                  final response = await http.post(
-                     Uri.parse('https://openclaw.alids.app/v1/chat/completions'),
-                     headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer Akatsuki2.'
-                     },
-                     body: jsonEncode({
-                        'model': 'openclaw/main',
-                        'messages': [{'role': 'user', 'content': prompt}]
-                     })
-                  );
-                  if (response.statusCode >= 200 && response.statusCode < 300) {
-                     final data = jsonDecode(response.body);
-                     return {'answer': data['choices'][0]['message']['content']};
-                  } else {
-                     return {'error': 'HTTP ${response.statusCode}: ${response.body}'};
-                  }
-               } catch (e) {
-                  return {'error': e.toString()};
-               }
+               return {'status': 'Background task started successfully. Please tell the user you are working on it and ask if they need anything else while waiting.'};
             }
             return {'error': 'Unknown tool'};
         } : null,
