@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
@@ -130,6 +131,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _ApiSection(copy: copy),
                 const SizedBox(height: 22),
                 const _ConnectorSection(),
+                const SizedBox(height: 22),
+                const _McpServerSection(),
                 const SizedBox(height: 22),
                 const _WebSearchSection(),
               ],
@@ -2739,6 +2742,243 @@ class _ModelSelectionDialogState extends State<_ModelSelectionDialog> {
           child: const Text('Save'),
         ),
       ],
+    );
+  }
+}
+
+class _McpServerSection extends StatelessWidget {
+  const _McpServerSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SectionHeader(
+            icon: LucideIcons.blocks,
+            title: 'MCP Servers',
+            accent: Color(0xff8b5cf6),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Configure Model Context Protocol (MCP) servers (e.g., n8n, local tools) to allow the LLM to interact with external systems.',
+            style: TextStyle(
+              color: p.onSurfaceVariant,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (app.mcpServers.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: p.surfaceDim,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: p.outline),
+              ),
+              child: Text(
+                'No MCP Servers configured yet.',
+                style: TextStyle(color: p.onSurfaceVariant),
+              ),
+            )
+          else
+            ...app.mcpServers.map(
+              (server) => Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: _McpServerEditor(server: server),
+              ),
+            ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => _showMcpServerDialog(context),
+                icon: const Icon(LucideIcons.plus, size: 16),
+                label: const Text('Add MCP Server'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showMcpServerDialog(BuildContext context, {McpServerConfig? initial}) async {
+    final app = context.read<AdoetzAppState>();
+    final nameCtrl = TextEditingController(text: initial?.name ?? '');
+    final urlCtrl = TextEditingController(text: initial?.url ?? '');
+    
+    // Extract token if it was saved as a Bearer token
+    String initialToken = '';
+    if (initial?.headers.containsKey('Authorization') == true) {
+      initialToken = initial!.headers['Authorization']!.replaceFirst('Bearer ', '');
+    }
+    final tokenCtrl = TextEditingController(text: initialToken);
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        final p = AppPalette.fromBrightness(
+          Theme.of(context).brightness == Brightness.dark,
+        );
+        return AlertDialog(
+          backgroundColor: p.surfaceDim,
+          title: Text(initial == null ? 'Add MCP Server' : 'Edit MCP Server', style: TextStyle(color: p.onSurface)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                style: TextStyle(color: p.onSurface),
+                decoration: InputDecoration(
+                  labelText: 'Server Name',
+                  labelStyle: TextStyle(color: p.onSurfaceVariant),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: urlCtrl,
+                style: TextStyle(color: p.onSurface),
+                decoration: InputDecoration(
+                  labelText: 'Server URL',
+                  labelStyle: TextStyle(color: p.onSurfaceVariant),
+                  hintText: 'http://localhost:5678/webhook/mcp',
+                  hintStyle: TextStyle(color: p.onSurfaceVariant.withValues(alpha: 0.5)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: tokenCtrl,
+                style: TextStyle(color: p.onSurface),
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: 'API Key (Optional)',
+                  labelStyle: TextStyle(color: p.onSurfaceVariant),
+                  hintText: 'Bearer Token or API Key',
+                  hintStyle: TextStyle(color: p.onSurfaceVariant.withValues(alpha: 0.5)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancel', style: TextStyle(color: p.onSurfaceVariant)),
+            ),
+            TextButton(
+              onPressed: () {
+                final Map<String, String> headers = Map.from(initial?.headers ?? const {});
+                final token = tokenCtrl.text.trim();
+                if (token.isNotEmpty) {
+                  headers['Authorization'] = 'Bearer $token';
+                } else {
+                  headers.remove('Authorization');
+                }
+
+                final config = McpServerConfig(
+                  id: initial?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
+                  name: nameCtrl.text.trim().isEmpty ? 'Unnamed Server' : nameCtrl.text.trim(),
+                  url: urlCtrl.text.trim(),
+                  enabled: initial?.enabled ?? true,
+                  headers: headers,
+                );
+                app.addMcpServer(config);
+                Navigator.pop(context);
+              },
+              child: Text('Save', style: TextStyle(color: p.primary)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _McpServerEditor extends StatelessWidget {
+  const _McpServerEditor({required this.server});
+
+  final McpServerConfig server;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    return Container(
+      decoration: BoxDecoration(
+        color: p.surfaceDim,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: server.enabled ? p.primary.withValues(alpha: 0.3) : p.outline,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Icon(
+                  LucideIcons.blocks,
+                  size: 20,
+                  color: server.enabled ? p.primary : p.onSurfaceVariant,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        server.name,
+                        style: TextStyle(
+                          color: p.onSurface,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Text(
+                        server.url,
+                        style: TextStyle(
+                          color: p.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                CupertinoSwitch(
+                  value: server.enabled,
+                  activeTrackColor: p.primary,
+                  onChanged: (val) => app.toggleMcpServer(server.id, val),
+                ),
+                IconButton(
+                  icon: const Icon(LucideIcons.edit2, size: 16),
+                  color: p.onSurfaceVariant,
+                  onPressed: () {
+                    // We can just call the dialog directly
+                    const _McpServerSection()._showMcpServerDialog(context, initial: server);
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(LucideIcons.trash2, size: 16),
+                  color: const Color(0xfff43f5e),
+                  onPressed: () => app.removeMcpServer(server.id),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -616,6 +617,61 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   icon: LucideIcons.camera,
                   label: 'Camera',
                   onTap: _captureImage,
+                ),
+                Consumer<AdoetzAppState>(
+                  builder: (context, app, child) {
+                    if (app.mcpServers.isEmpty) return const SizedBox.shrink();
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(height: 12),
+                        Divider(height: 1, color: p.outline),
+                        const SizedBox(height: 12),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'MCP Servers',
+                              style: TextStyle(
+                                color: p.onSurfaceVariant,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                        ...app.mcpServers.map((server) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                            child: Row(
+                              children: [
+                                Icon(LucideIcons.blocks, size: 20, color: server.enabled ? p.primary : p.onSurfaceVariant),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    server.name,
+                                    style: TextStyle(
+                                      color: p.onSurface,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                                CupertinoSwitch(
+                                  value: server.enabled,
+                                  activeTrackColor: p.primary,
+                                  onChanged: (val) {
+                                    app.toggleMcpServer(server.id, val);
+                                  },
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),
@@ -1243,6 +1299,18 @@ class _ThoughtBlockState extends State<_ThoughtBlock> {
     }
   }
 
+  String get _blockTitle {
+    final text = widget.content.trimLeft();
+    if (text.startsWith('**Executing')) {
+      final match = RegExp(r'\*\*Executing (?:MCP tool )?`(.*?)`').firstMatch(text);
+      if (match != null) {
+        final toolName = match.group(1);
+        return widget.active ? 'Executing $toolName...' : 'Executed $toolName';
+      }
+    }
+    return widget.active ? 'Thinking...' : 'Thoughts';
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -1274,7 +1342,7 @@ class _ThoughtBlockState extends State<_ThoughtBlock> {
             children: [
               Expanded(
                 child: Text(
-                  widget.active ? 'Thinking...' : 'Thoughts',
+                  _blockTitle,
                   style: TextStyle(
                     color: p.primary,
                     fontSize: 11,

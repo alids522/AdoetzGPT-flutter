@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models.dart';
+import 'mcp_service.dart';
 
 typedef TextDelta = void Function(String text);
 typedef StatusCallback = void Function(String status);
@@ -289,6 +290,7 @@ class AiService {
     required TextDelta onText,
     required StatusCallback onStatus,
     String? generationId,
+    McpService? mcpService,
   }) async {
     final client = http.Client();
     if (generationId != null) {
@@ -348,6 +350,7 @@ class AiService {
         artifactMode: artifactMode,
         syncSettings: syncSettings,
         contextLimit: contextLimit,
+        mcpService: mcpService,
         onText: onText,
       );
     }
@@ -490,6 +493,7 @@ $chatHistory
     required bool artifactMode,
     required SyncSettings syncSettings,
     int? contextLimit,
+    McpService? mcpService,
     required TextDelta onText,
   }) async {
     final activeMemories = memories
@@ -571,6 +575,26 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
     var isEstimated = true;
     final stopwatch = Stopwatch()..start();
     String responseText = '';
+    String accumulatedResponse = '';
+
+    List<Map<String, dynamic>> openaiTools = [];
+    if (mcpService != null) {
+      try {
+        final mcpToolsList = await mcpService.getAllAvailableTools();
+        for (final tool in mcpToolsList) {
+          openaiTools.add({
+            'type': 'function',
+            'function': {
+              'name': tool.name,
+              'description': tool.description ?? '',
+              'parameters': tool.inputSchema,
+            }
+          });
+        }
+      } catch (e) {
+        debugPrint('Error loading MCP tools: $e');
+      }
+    }
 
     while (true) {
       final payload = <String, dynamic>{
@@ -578,6 +602,7 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
         'messages': currentMessages,
         'stream': true,
         'stream_options': {'include_usage': true},
+        if (openaiTools.isNotEmpty) 'tools': openaiTools,
         if (!thinkingMode &&
             selectedModel.toLowerCase().contains('deepseek')) ...{
           'include_reasoning': false,
@@ -658,7 +683,7 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
             }
             final text = stringValue(delta['reasoning_content']);
             buffer.write(text);
-            onText(buffer.toString());
+            onText(accumulatedResponse + buffer.toString());
           }
           final messageObj = choice is Map ? choice['message'] : null;
           var content = delta is Map
@@ -688,9 +713,9 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
             }
             buffer.write(content);
             onText(
-              thinkingMode
+              accumulatedResponse + (thinkingMode
                   ? buffer.toString()
-                  : stripThinkingBlocks(buffer.toString()),
+                  : stripThinkingBlocks(buffer.toString())),
             );
           }
         } catch (_) {}
@@ -727,13 +752,16 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
       }
 
       // Final fallback if absolutely nothing was extracted
-      if (buffer.isEmpty && rawBuffer.toString().trim().isNotEmpty) {
+      if (buffer.isEmpty && rawBuffer.toString().trim().isNotEmpty && capturedToolName.isEmpty) {
         buffer.write('```\n${rawBuffer.toString().trim()}\n```');
       }
 
-      responseText = thinkingMode
+      final currentChunk = thinkingMode
           ? buffer.toString()
           : stripThinkingBlocks(buffer.toString());
+      
+      accumulatedResponse += currentChunk;
+      responseText = accumulatedResponse;
 
       outputTokens = outputTokens == 0 ? countTokens(responseText) : outputTokens;
 
@@ -746,7 +774,53 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
       }
 
       if (capturedToolName.isNotEmpty && capturedToolArgs.isNotEmpty) {
-        onText('\n*Executing `$capturedToolName` tool on OpenClaw...*\n');
+        // Try MCP tools first
+        if (openaiTools.any((t) => t['function']['name'] == capturedToolName)) {
+          final logStart = '\n<think>\n**Executing MCP tool `$capturedToolName`...**\n';
+          accumulatedResponse += logStart;
+          onText(accumulatedResponse);
+          try {
+            final argsMap = jsonDecode(capturedToolArgs);
+            final toolOutput = await mcpService!.callTool(capturedToolName, argsMap);
+            
+            final outputStr = toolOutput is String ? toolOutput : jsonEncode(toolOutput);
+            final logEnd = '\n```json\n$outputStr\n```\n</think>\n\n';
+            accumulatedResponse += logEnd;
+            onText(accumulatedResponse);
+            
+            currentMessages.add({
+              'role': 'assistant',
+              'tool_calls': [
+                {
+                  'id': 'call_${DateTime.now().millisecondsSinceEpoch}',
+                  'type': 'function',
+                  'function': {
+                    'name': capturedToolName,
+                    'arguments': capturedToolArgs
+                  }
+                }
+              ]
+            });
+            currentMessages.add({
+              'role': 'tool',
+              'content': outputStr,
+              'tool_call_id': 'call_${DateTime.now().millisecondsSinceEpoch}'
+            });
+            
+            capturedToolName = '';
+            capturedToolArgs = '';
+            continue;
+          } catch (e) {
+            final logError = '\n<think>\n[MCP Tool Execution Error: $e]\n</think>\n';
+            accumulatedResponse += logError;
+            onText(accumulatedResponse);
+            break;
+          }
+        }
+        
+        final logStartOpenClaw = '\n<think>\n**Executing `$capturedToolName` tool on OpenClaw...**\n';
+        accumulatedResponse += logStartOpenClaw;
+        onText(accumulatedResponse);
         try {
           final argsMap = jsonDecode(capturedToolArgs);
           final res = await http.post(
@@ -765,7 +839,9 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
           final toolOutput = resultData['ok'] == true ? resultData['result'] : resultData['error'];
           
           final outputStr = toolOutput is String ? toolOutput : jsonEncode(toolOutput);
-          onText('\n```\n$outputStr\n```\n\n');
+          final logEndOpenClaw = '\n```json\n$outputStr\n```\n</think>\n\n';
+          accumulatedResponse += logEndOpenClaw;
+          onText(accumulatedResponse);
           
           final command = jsonDecode(capturedToolArgs)['command'];
           currentMessages.add({
@@ -783,7 +859,9 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
           
           continue; // Loop back and query LLM with the tool output!
         } catch (e) {
-          onText('\n[Tool Execution Error: $e]\n');
+          final logErrorOpenClaw = '\n<think>\n[OpenClaw Tool Execution Error: $e]\n</think>\n';
+          accumulatedResponse += logErrorOpenClaw;
+          onText(accumulatedResponse);
           break;
         }
       } else {
@@ -1928,35 +2006,40 @@ class ParsedText {
 
 ParsedText parseText(String text) {
   final regex = RegExp(r'<think>([\s\S]*?)(</think>|$)', caseSensitive: false);
-  final match = regex.firstMatch(text);
-  if (match == null) {
+  final matches = regex.allMatches(text);
+  
+  if (matches.isEmpty) {
     return ParsedText(mainContent: text, isThinkingStill: false);
   }
-  final hasClosed = text.toLowerCase().contains('</think>');
-  var main = '';
-  if (hasClosed) {
-    final before = text.split(RegExp(r'<think>', caseSensitive: false)).first;
-    final after = text.split(RegExp(r'</think>', caseSensitive: false)).last;
-    main = '$before $after'.trim();
-  } else {
-    main = text.split(RegExp(r'<think>', caseSensitive: false)).first.trim();
+  
+  final thinkBuffer = StringBuffer();
+  var isThinkingStill = false;
+  
+  for (final match in matches) {
+    final group1 = match.group(1)?.trim();
+    if (group1 != null && group1.isNotEmpty) {
+      if (thinkBuffer.isNotEmpty) thinkBuffer.writeln('\n');
+      thinkBuffer.write(group1);
+    }
+    if (!match.group(0)!.toLowerCase().endsWith('</think>')) {
+      isThinkingStill = true;
+    }
   }
+  
+  var main = text.replaceAll(regex, '').trim();
+  main = main.replaceAll(RegExp(r'</think>', caseSensitive: false), '').trimLeft();
+
   return ParsedText(
-    thinkContent: match.group(1),
+    thinkContent: thinkBuffer.toString(),
     mainContent: main,
-    isThinkingStill: !hasClosed,
+    isThinkingStill: isThinkingStill,
   );
 }
 
 String stripThinkingBlocks(String text) {
-  final withoutClosed = text.replaceAll(
-    RegExp(r'<think>[\s\S]*?</think>', caseSensitive: false),
-    '',
-  );
-  return withoutClosed
-      .replaceAll(RegExp(r'<think>[\s\S]*$', caseSensitive: false), '')
-      .replaceAll(RegExp(r'</think>', caseSensitive: false), '')
-      .trimLeft();
+  return text.replaceAll(RegExp(r'<think>[\s\S]*?(</think>|$)', caseSensitive: false), '')
+             .replaceAll(RegExp(r'</think>', caseSensitive: false), '')
+             .trimLeft();
 }
 
 class _PromptCacheUsage {

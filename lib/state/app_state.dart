@@ -18,11 +18,12 @@ import '../services/live_foreground_service.dart';
 import '../services/memory_agent.dart';
 import '../services/storage_service.dart';
 import '../services/sync_service.dart';
+import '../services/mcp_service.dart';
 
 const _idGenerator = Uuid();
 
 class AdoetzAppState extends ChangeNotifier {
-  AdoetzAppState({StorageService? storage, SyncService? sync, AiService? ai})
+  AdoetzAppState({StorageService? storage, SyncService? sync, AiService? ai, this.mcpService})
     : _storage = storage ?? StorageService(),
       _sync = sync ?? SyncService(),
       _ai = ai ?? AiService();
@@ -30,6 +31,7 @@ class AdoetzAppState extends ChangeNotifier {
   final StorageService _storage;
   final SyncService _sync;
   final AiService _ai;
+  final McpService? mcpService;
   GeminiLiveService? _liveService;
   Timer? _remoteSyncTimer;
   Timer? _remotePullTimer;
@@ -110,6 +112,7 @@ class AdoetzAppState extends ChangeNotifier {
   List<String> geminiModels = const [];
   List<EndpointModel> endpointModels = const [];
   List<String> models = const ['gemini-2.5-flash'];
+  List<McpServerConfig> mcpServers = const [];
 
   String _newId(String prefix) => '$prefix-${_idGenerator.v4()}';
 
@@ -227,6 +230,15 @@ class AdoetzAppState extends ChangeNotifier {
     unawaited(_persist(touchSavedAt: false));
     unawaited(_pullRemoteStateAfterStartup());
     unawaited(_startRealtimeSync());
+    
+    // Connect to MCP servers
+    if (mcpService != null) {
+      for (final server in mcpServers) {
+        unawaited(mcpService!.connectToServer(server).catchError((e) {
+          debugPrint('Failed to connect to MCP server during init: $e');
+        }));
+      }
+    }
   }
 
   Future<void> _pullRemoteStateAfterStartup() async {
@@ -306,6 +318,7 @@ class AdoetzAppState extends ChangeNotifier {
       memories: memories,
       tokenUsageData: tokenUsageData,
       customCounters: customCounters,
+      mcpServers: mcpServers,
       lastSyncAt: lastSyncAt,
       savedAt: savedAt,
     );
@@ -347,6 +360,7 @@ class AdoetzAppState extends ChangeNotifier {
     modelInputCosts = state.modelInputCosts;
     modelOutputCosts = state.modelOutputCosts;
     modelCacheHitCosts = state.modelCacheHitCosts;
+    mcpServers = state.mcpServers;
     if (notify) notifyListeners();
   }
 
@@ -497,6 +511,7 @@ class AdoetzAppState extends ChangeNotifier {
       memories: mergedMemories,
       tokenUsageData: mergedUsage,
       customCounters: counterMap.values.toList(),
+      mcpServers: remoteIsNewer ? remote.mcpServers : local.mcpServers,
       soundEffectsEnabled: remoteIsNewer
           ? remote.soundEffectsEnabled
           : local.soundEffectsEnabled,
@@ -1852,6 +1867,7 @@ class AdoetzAppState extends ChangeNotifier {
         artifactMode: isArtifactMode,
         syncSettings: syncSettings,
         generationId: generationId,
+        mcpService: mcpService,
         onStatus: (status) {
           _queueStreamText(generationId, session.id, botId, status);
         },
@@ -3414,6 +3430,55 @@ class AdoetzAppState extends ChangeNotifier {
         });
       }
     });
+  }
+
+  Future<void> addMcpServer(McpServerConfig config) async {
+    // If it exists, update it
+    final index = mcpServers.indexWhere((s) => s.id == config.id);
+    if (index >= 0) {
+      final updatedList = List<McpServerConfig>.from(mcpServers);
+      updatedList[index] = config;
+      mcpServers = updatedList;
+    } else {
+      mcpServers = [...mcpServers, config];
+    }
+    
+    _persist();
+    
+    if (mcpService != null) {
+      // Disconnect if previously connected, then connect
+      await mcpService!.disconnectServer(config.id);
+      try {
+        await mcpService!.connectToServer(config);
+      } catch (e) {
+        debugPrint('Failed to connect to newly added MCP server: $e');
+        rethrow;
+      }
+    }
+  }
+  
+  Future<void> toggleMcpServer(String id, bool enabled) async {
+    final index = mcpServers.indexWhere((s) => s.id == id);
+    if (index >= 0) {
+      final updatedList = List<McpServerConfig>.from(mcpServers);
+      final updatedConfig = updatedList[index].copyWith(enabled: enabled);
+      updatedList[index] = updatedConfig;
+      mcpServers = updatedList;
+      _persist();
+      
+      if (mcpService != null) {
+        mcpService!.updateConfig(updatedConfig);
+      }
+    }
+  }
+
+  Future<void> removeMcpServer(String id) async {
+    mcpServers = mcpServers.where((s) => s.id != id).toList();
+    _persist();
+    
+    if (mcpService != null) {
+      await mcpService!.disconnectServer(id);
+    }
   }
 
   @override

@@ -89,6 +89,7 @@ class StorageService {
           ? state.tokenUsageData.take(500).toList()
           : state.tokenUsageData,
       customCounters: state.customCounters,
+      mcpServers: state.mcpServers,
       soundEffectsEnabled: state.soundEffectsEnabled,
       isLiveVideoEnabled: state.isLiveVideoEnabled,
       isLiveFrontCamera: state.isLiveFrontCamera,

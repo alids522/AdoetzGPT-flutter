@@ -6,11 +6,21 @@ import 'screens/auth_screen.dart';
 import 'state/app_state.dart';
 import 'ui/app_theme.dart';
 
+import 'services/mcp_service.dart';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => AdoetzAppState()..initialize(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => McpService()),
+        ChangeNotifierProxyProvider<McpService, AdoetzAppState>(
+          create: (context) => AdoetzAppState(
+            mcpService: context.read<McpService>(),
+          )..initialize(),
+          update: (_, mcp, appState) => appState!,
+        ),
+      ],
       child: const AdoetzGptApp(),
     ),
   );

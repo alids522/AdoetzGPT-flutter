@@ -1675,6 +1675,60 @@ class SyncSettings {
   };
 }
 
+class McpServerConfig {
+  final String id;
+  final String name;
+  final String url;
+  final bool enabled;
+  final Map<String, String> headers;
+  
+  const McpServerConfig({
+    required this.id,
+    required this.name,
+    required this.url,
+    this.enabled = true,
+    this.headers = const {},
+  });
+
+  McpServerConfig copyWith({
+    String? id,
+    String? name,
+    String? url,
+    bool? enabled,
+    Map<String, String>? headers,
+  }) {
+    return McpServerConfig(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      url: url ?? this.url,
+      enabled: enabled ?? this.enabled,
+      headers: headers ?? this.headers,
+    );
+  }
+
+  factory McpServerConfig.fromJson(Map<String, dynamic> json) {
+    return McpServerConfig(
+      id: stringValue(json['id'], DateTime.now().millisecondsSinceEpoch.toString()),
+      name: stringValue(json['name'], 'Unknown Server'),
+      url: stringValue(json['url']),
+      enabled: boolValue(json['enabled'], true),
+      headers: json['headers'] is Map
+          ? Map<String, String>.from(json['headers'])
+          : const {},
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'url': url,
+      'enabled': enabled,
+      'headers': headers,
+    };
+  }
+}
+
 class PersistedAppState {
   const PersistedAppState({
     required this.currentUser,
@@ -1702,6 +1756,7 @@ class PersistedAppState {
     required this.memories,
     required this.tokenUsageData,
     required this.customCounters,
+    required this.mcpServers,
     required this.soundEffectsEnabled,
     required this.isLiveVideoEnabled,
     required this.isLiveFrontCamera,
@@ -1735,6 +1790,7 @@ class PersistedAppState {
   final List<Memory> memories;
   final List<TokenUsageRecord> tokenUsageData;
   final List<CustomCounter> customCounters;
+  final List<McpServerConfig> mcpServers;
   final bool soundEffectsEnabled;
   final bool isLiveVideoEnabled;
   final bool isLiveFrontCamera;
@@ -1777,6 +1833,7 @@ class PersistedAppState {
       memories: const [],
       tokenUsageData: const [],
       customCounters: const [],
+      mcpServers: const [],
       soundEffectsEnabled: true,
       isLiveVideoEnabled: false,
       isLiveFrontCamera: false,
@@ -1852,6 +1909,9 @@ class PersistedAppState {
       customCounters: mapList(
         json['customCounters'],
       ).map(CustomCounter.fromJson).toList(),
+      mcpServers: mapList(
+        json['mcpServers'],
+      ).map(McpServerConfig.fromJson).toList(),
       soundEffectsEnabled: boolValue(json['soundEffectsEnabled'], true),
       isLiveVideoEnabled: boolValue(json['isLiveVideoEnabled']),
       isLiveFrontCamera: boolValue(json['isLiveFrontCamera']),
@@ -1896,6 +1956,7 @@ class PersistedAppState {
     'memories': memories.map((item) => item.toJson()).toList(),
     'tokenUsageData': tokenUsageData.map((item) => item.toJson()).toList(),
     'customCounters': customCounters.map((item) => item.toJson()).toList(),
+    'mcpServers': mcpServers.map((item) => item.toJson()).toList(),
     'soundEffectsEnabled': soundEffectsEnabled,
     'isLiveVideoEnabled': isLiveVideoEnabled,
     'isLiveFrontCamera': isLiveFrontCamera,
