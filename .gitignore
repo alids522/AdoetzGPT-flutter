@@ -50,3 +50,7 @@ diff.txt
 migrate.ts
 flutter_web_*.log
 flutter_web_server_*.log
+
+# Backend Node.js
+node_modules/
+.env

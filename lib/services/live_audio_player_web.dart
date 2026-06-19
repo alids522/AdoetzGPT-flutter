@@ -50,6 +50,11 @@ class LiveAudioPlayer {
     _nextPlayTime = startAt + samples.length / sampleRate;
   }
 
+  Future<void> clear() async {
+    await stop();
+    await start();
+  }
+
   Future<void> stop() async {
     final context = _context;
     _context = null;
