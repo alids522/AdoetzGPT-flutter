@@ -28,6 +28,8 @@
 	<string>AdoetzGPT uses the camera to attach photos to chat messages.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>AdoetzGPT uses the microphone for voice chat and transcription controls.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>AdoetzGPT uses speech recognition to convert your spoken words into text messages.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>AdoetzGPT uses the photo library to attach images and videos to chat messages.</string>
 	<key>LSRequiresIPhoneOS</key>
