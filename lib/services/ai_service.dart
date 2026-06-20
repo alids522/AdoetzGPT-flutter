@@ -549,7 +549,7 @@ $chatHistory
       {'role': 'user', 'content': content},
     ];
 
-    final isOpenClaw = endpoint.url.toLowerCase().contains('openclaw');
+    final isOpenClaw = endpoint.url.toLowerCase().contains('openclaw') == true;
     if (isOpenClaw) {
       messages.insert(0, {
         'role': 'system',
@@ -563,6 +563,8 @@ or
 Do not explain that you lack tools. Just output the <exec> block! The system will intercept it, run it, and feed the output back to you.'''
       });
     }
+
+
 
     var currentMessages = List<Map<String, dynamic>>.from(messages);
     var inputTokens =
@@ -774,7 +776,6 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
       }
 
       if (capturedToolName.isNotEmpty && capturedToolArgs.isNotEmpty) {
-        // Try MCP tools first
         if (openaiTools.any((t) => t['function']['name'] == capturedToolName)) {
           final logStart = '\n<think>\n**Executing MCP tool `$capturedToolName`...**\n';
           accumulatedResponse += logStart;
@@ -788,11 +789,12 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
             accumulatedResponse += logEnd;
             onText(accumulatedResponse);
             
+            final callId = 'call_${DateTime.now().millisecondsSinceEpoch}';
             currentMessages.add({
               'role': 'assistant',
               'tool_calls': [
                 {
-                  'id': 'call_${DateTime.now().millisecondsSinceEpoch}',
+                  'id': callId,
                   'type': 'function',
                   'function': {
                     'name': capturedToolName,
@@ -804,7 +806,7 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
             currentMessages.add({
               'role': 'tool',
               'content': outputStr,
-              'tool_call_id': 'call_${DateTime.now().millisecondsSinceEpoch}'
+              'tool_call_id': callId
             });
             
             capturedToolName = '';
@@ -816,53 +818,83 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
             onText(accumulatedResponse);
             break;
           }
-        }
-        
-        final logStartOpenClaw = '\n<think>\n**Executing `$capturedToolName` tool on OpenClaw...**\n';
-        accumulatedResponse += logStartOpenClaw;
-        onText(accumulatedResponse);
-        try {
-          final argsMap = jsonDecode(capturedToolArgs);
-          final res = await http.post(
-            Uri.parse('https://openclaw.alids.app/tools/invoke'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer Akatsuki2.'
-            },
-            body: jsonEncode({
-              'tool': capturedToolName,
-              'args': argsMap
-            }),
-          );
-          
-          final resultData = jsonDecode(res.body);
-          final toolOutput = resultData['ok'] == true ? resultData['result'] : resultData['error'];
-          
-          final outputStr = toolOutput is String ? toolOutput : jsonEncode(toolOutput);
-          final logEndOpenClaw = '\n```json\n$outputStr\n```\n</think>\n\n';
-          accumulatedResponse += logEndOpenClaw;
+        } else if (isOpenClaw) {
+          // OpenClaw Agent Mode Fallback
+          final logStartOpenClaw = '\n<think>\n**Executing `$capturedToolName` tool on OpenClaw...**\n';
+          accumulatedResponse += logStartOpenClaw;
+          onText(accumulatedResponse);
+          try {
+            final argsMap = jsonDecode(capturedToolArgs);
+            final baseUrl = _endpointBase(endpoint.url);
+            final headers = <String, String>{'Content-Type': 'application/json'};
+            if (endpoint.key.trim().isNotEmpty && endpoint.key != 'sk-...') {
+              headers['Authorization'] = 'Bearer ${endpoint.key}';
+            }
+            
+            final res = await http.post(
+              Uri.parse('$baseUrl/tools/invoke'),
+              headers: headers,
+              body: jsonEncode({
+                'tool': capturedToolName,
+                'args': argsMap
+              }),
+            );
+            
+            final resultData = jsonDecode(res.body);
+            final toolOutput = resultData['ok'] == true ? resultData['result'] : resultData['error'];
+            
+            final outputStr = toolOutput is String ? toolOutput : jsonEncode(toolOutput);
+            final logEndOpenClaw = '\n```json\n$outputStr\n```\n</think>\n\n';
+            accumulatedResponse += logEndOpenClaw;
+            onText(accumulatedResponse);
+            
+            final command = jsonDecode(capturedToolArgs)['command'];
+            currentMessages.add({
+              'role': 'assistant',
+              'content': '<exec>$command</exec>'
+            });
+            currentMessages.add({
+              'role': 'user',
+              'content': 'SYSTEM EXECUTION RESULT:\n```\n$outputStr\n```\nNow answer the user based on the above output.'
+            });
+            
+            capturedToolName = '';
+            capturedToolArgs = '';
+            continue;
+          } catch (e) {
+            final logErrorOpenClaw = '\n<think>\n[OpenClaw Tool Execution Error: $e]\n</think>\n';
+            accumulatedResponse += logErrorOpenClaw;
+            onText(accumulatedResponse);
+            break;
+          }
+        } else {
+          final logError = '\n<think>\n[Error: The tool `$capturedToolName` is not available or is disabled.]\n</think>\n\n';
+          accumulatedResponse += logError;
           onText(accumulatedResponse);
           
-          final command = jsonDecode(capturedToolArgs)['command'];
+          final callId = 'call_${DateTime.now().millisecondsSinceEpoch}';
           currentMessages.add({
             'role': 'assistant',
-            'content': '<exec>$command</exec>'
+            'tool_calls': [
+              {
+                'id': callId,
+                'type': 'function',
+                'function': {
+                  'name': capturedToolName,
+                  'arguments': capturedToolArgs
+                }
+              }
+            ]
           });
           currentMessages.add({
-            'role': 'user',
-            'content': 'SYSTEM EXECUTION RESULT:\n```\n$outputStr\n```\nNow answer the user based on the above output.'
+            'role': 'tool',
+            'content': 'Error: Tool is not available or is currently disabled. Please inform the user.',
+            'tool_call_id': callId
           });
           
-          // Clear variables for the next iteration
           capturedToolName = '';
           capturedToolArgs = '';
-          
-          continue; // Loop back and query LLM with the tool output!
-        } catch (e) {
-          final logErrorOpenClaw = '\n<think>\n[OpenClaw Tool Execution Error: $e]\n</think>\n';
-          accumulatedResponse += logErrorOpenClaw;
-          onText(accumulatedResponse);
-          break;
+          continue;
         }
       } else {
         break; // No tools called, exit loop

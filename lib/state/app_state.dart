@@ -1995,6 +1995,28 @@ class AdoetzAppState extends ChangeNotifier {
     }
 
     Object? lastError;
+    
+    String? openClawBaseUrl;
+    String? openClawKey;
+    if (isOpenClawProxy) {
+      final connector = agentConnectors.where((c) => c.id == activeChatTarget.connectorId).firstOrNull;
+      if (connector != null) {
+        openClawKey = connector.encryptedApiKey;
+        final base = connector.baseUrl.trim().replaceAll(RegExp(r'/$'), '');
+        final uri = Uri.tryParse(base);
+        if (uri != null && uri.hasScheme) {
+          final path = uri.path.replaceAll(RegExp(r'/+$'), '');
+          if (path.toLowerCase().endsWith('/chat/completions')) {
+            openClawBaseUrl = '${uri.scheme}://${uri.host}${path.substring(0, path.length - 17)}';
+          } else {
+            openClawBaseUrl = '${uri.scheme}://${uri.host}$path';
+          }
+        } else {
+          openClawBaseUrl = base;
+        }
+      }
+    }
+
     for (final liveModel in liveModels) {
       late GeminiLiveService service;
       service = GeminiLiveService(
@@ -2027,12 +2049,13 @@ class AdoetzAppState extends ChangeNotifier {
                if (prompt == null || prompt.isEmpty) return {'error': 'prompt is required'};
                Future(() async {
                  try {
+                    final headers = <String, String>{'Content-Type': 'application/json'};
+                    if (openClawKey != null && openClawKey.trim().isNotEmpty && openClawKey != 'sk-...') {
+                      headers['Authorization'] = 'Bearer $openClawKey';
+                    }
                     final response = await http.post(
-                       Uri.parse('https://openclaw.alids.app/v1/chat/completions'),
-                       headers: {
-                          'Content-Type': 'application/json',
-                          'Authorization': 'Bearer Akatsuki2.'
-                       },
+                       Uri.parse('${openClawBaseUrl ?? 'https://openclaw.alids.app/v1'}/chat/completions'),
+                       headers: headers,
                        body: jsonEncode({
                           'model': 'openclaw/main',
                           'messages': [{'role': 'user', 'content': prompt}]
@@ -3464,6 +3487,7 @@ class AdoetzAppState extends ChangeNotifier {
       final updatedConfig = updatedList[index].copyWith(enabled: enabled);
       updatedList[index] = updatedConfig;
       mcpServers = updatedList;
+      notifyListeners();
       _persist();
       
       if (mcpService != null) {
