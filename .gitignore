@@ -54,3 +54,6 @@ flutter_web_server_*.log
 # Backend Node.js
 node_modules/
 .env
+
+# React Project
+react-project/

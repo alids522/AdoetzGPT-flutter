@@ -957,11 +957,21 @@ class _MessageBubble extends StatelessWidget {
     final streamingAssistant =
         !message.isUser && isLast && app.isSessionGenerating(app.currentSession.id) && !editing;
 
+    final hasContent = message.text.trim().isNotEmpty || 
+        (!message.isUser && streamingAssistant) || 
+        parsed.thinkContent != null || 
+        editing;
+
     final bubble = Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: Column(
         crossAxisAlignment: align,
         children: [
+          if (message.attachments.isNotEmpty)
+            _MessageAttachments(files: message.attachments),
+          if (message.attachments.isNotEmpty && hasContent)
+            const SizedBox(height: 8),
+          if (hasContent)
           TweenAnimationBuilder<double>(
             tween: Tween<double>(begin: animateBubble ? 0.0 : 1.0, end: 1.0),
             duration: Duration(milliseconds: animateBubble ? 460 : 1),
@@ -1042,8 +1052,6 @@ class _MessageBubble extends StatelessWidget {
                           content: parsed.thinkContent!,
                           active: parsed.isThinkingStill,
                         ),
-                      if (message.attachments.isNotEmpty)
-                        _MessageAttachments(files: message.attachments),
                       if (message.isUser)
                         Text(
                           message.text,
@@ -2157,13 +2165,23 @@ class _MessageAttachments extends StatelessWidget {
         runSpacing: 8,
         children: files.map((file) {
           if (file.type.startsWith('image/') && file.data.isNotEmpty) {
-            return ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: Image.memory(
-                base64Decode(file.data),
-                width: 180,
-                height: 180,
-                fit: BoxFit.cover,
+            final bytes = base64Decode(file.data);
+            return GestureDetector(
+              onTap: () {
+                showDialog(
+                  context: context,
+                  useSafeArea: false,
+                  builder: (context) => _ImageDialog(bytes: bytes, filename: file.name),
+                );
+              },
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: Image.memory(
+                  bytes,
+                  width: 180,
+                  height: 180,
+                  fit: BoxFit.cover,
+                ),
               ),
             );
           }
@@ -2184,16 +2202,29 @@ class _FileChip extends StatelessWidget {
     final p = AppPalette.fromBrightness(
       Theme.of(context).brightness == Brightness.dark,
     );
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 220),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: p.surfaceDim,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () async {
+          final bytes = base64Decode(file.data);
+          await downloadFile(file.name, bytes);
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Saved ${file.name}')),
+            );
+          }
+        },
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: p.outline),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 220),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: p.surfaceDim,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: p.outline),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             file.type.startsWith('video/')
@@ -2209,6 +2240,54 @@ class _FileChip extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: p.onSurface, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    ),
+  ),
+);
+  }
+}
+
+class _ImageDialog extends StatelessWidget {
+  const _ImageDialog({required this.bytes, required this.filename});
+
+  final Uint8List bytes;
+  final String filename;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog.fullscreen(
+      backgroundColor: Colors.black,
+      child: Stack(
+        children: [
+          Center(
+            child: InteractiveViewer(
+              child: Image.memory(bytes),
+            ),
+          ),
+          Positioned(
+            top: 40,
+            right: 20,
+            child: IconButton(
+              icon: const Icon(LucideIcons.x, color: Colors.white),
+              onPressed: () => Navigator.pop(context),
+            ),
+          ),
+          Positioned(
+            bottom: 40,
+            right: 20,
+            child: IconButton(
+              icon: const Icon(LucideIcons.download, color: Colors.white),
+              onPressed: () async {
+                await downloadFile(filename, bytes);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Saved $filename')),
+                  );
+                }
+              },
             ),
           ),
         ],
